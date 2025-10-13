@@ -970,6 +970,63 @@ export default function LeftDock() {
     let feats: any[] = [];
     let fc4326: any = null;
 
+    const pickSampleCoordinate = (fc: any): [number, number] | null => {
+      if (!fc || !Array.isArray(fc.features)) return null;
+      const walkCoords = (coords: any): [number, number] | null => {
+        if (!Array.isArray(coords)) return null;
+        if (
+          coords.length >= 2 &&
+          typeof coords[0] === "number" &&
+          typeof coords[1] === "number"
+        ) {
+          const x = Number(coords[0]);
+          const y = Number(coords[1]);
+          if (Number.isFinite(x) && Number.isFinite(y)) {
+            return [x, y];
+          }
+        }
+        for (const part of coords) {
+          const found = walkCoords(part);
+          if (found) return found;
+        }
+        return null;
+      };
+      for (const feat of fc.features) {
+        const geom = feat?.geometry;
+        if (!geom) continue;
+        const coords = geom.coordinates;
+        const found = walkCoords(coords);
+        if (found) return found;
+      }
+      return null;
+    };
+
+    const inferCrsOrderHints = (
+      fc: any
+    ): {
+      crsHint?: "EPSG:4326" | "EPSG:3857";
+      orderHint?: "xy" | "yx";
+    } => {
+      const sample = pickSampleCoordinate(fc);
+      if (!sample) return {};
+      const [a, b] = sample;
+      const absA = Math.abs(a);
+      const absB = Math.abs(b);
+      const looksLonLat = absA <= 180 && absB <= 90;
+      const looksLatLon = absA <= 90 && absB <= 180;
+      if (looksLonLat && !looksLatLon) {
+        return { crsHint: "EPSG:4326", orderHint: "xy" };
+      }
+      if (looksLatLon && !looksLonLat) {
+        return { crsHint: "EPSG:4326", orderHint: "yx" };
+      }
+      if (looksLonLat && looksLatLon) {
+        // Ambiguous but within geographic range; default to xy order.
+        return { crsHint: "EPSG:4326", orderHint: "xy" };
+      }
+      return { crsHint: "EPSG:3857", orderHint: "xy" };
+    };
+
     try {
       if (/\.geojson$/i.test(file.name)) {
         const parsed = JSON.parse(await file.text());
@@ -1086,7 +1143,9 @@ export default function LeftDock() {
 
     const savedCount = Array.isArray(fc4326?.features)
       ? fc4326.features.length
-      : feats.length;
+      : 0;
+
+    const hints = inferCrsOrderHints(fc4326);
 
     reg.set(key, {
       key,
@@ -1095,7 +1154,11 @@ export default function LeftDock() {
       fc: fc4326, // FeatureCollection yang sudah disanitasi (Polygon/MultiPolygon aman)
       ts: Date.now(),
       count: savedCount,
-      meta: { fileName: file.name },
+      meta: {
+        fileName: file.name,
+        ...(hints.crsHint ? { crsHint: hints.crsHint } : {}),
+        ...(hints.orderHint ? { orderHint: hints.orderHint } : {}),
+      },
     });
 
     window.dispatchEvent(new CustomEvent("datasets-updated"));

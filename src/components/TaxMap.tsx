@@ -528,73 +528,74 @@ export default function TaxMap() {
         return;
       }
 
-      // Helper: normalize coordinates (close ring, coerce to numbers)
-      const normalizeCoordinates = (coords: any): any => {
-        if (!Array.isArray(coords)) return coords;
-        if (Array.isArray(coords[0])) {
-          if (Array.isArray(coords[0][0])) {
-            return coords.map((ring: any) => normalizeCoordinates(ring));
-          } else {
-            const normalized: [number, number][] = [];
-            for (const coord of coords) {
-              if (!Array.isArray(coord) || coord.length < 2) continue;
-              const x = Number(coord[0]);
-              const y = Number(coord[1]);
-              if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-              normalized.push([x, y]);
-            }
-            if (normalized.length >= 3) {
-              const first = normalized[0];
-              const last = normalized[normalized.length - 1];
-              if (first[0] !== last[0] || first[1] !== last[1]) {
-                normalized.push([first[0], first[1]]);
-              }
-              return normalized;
-            }
-            return [];
-          }
+      const metaHints: Record<string, any> = (item?.meta || meta || {}) ?? {};
+      const metaCrsHint =
+        metaHints.crsHint === "EPSG:4326" || metaHints.crsHint === "EPSG:3857"
+          ? (metaHints.crsHint as "EPSG:4326" | "EPSG:3857")
+          : undefined;
+      const metaOrderHint =
+        metaHints.orderHint === "xy" || metaHints.orderHint === "yx"
+          ? (metaHints.orderHint as "xy" | "yx")
+          : undefined;
+
+      type Ring = [number, number][];
+      type Poly = Ring[];
+
+      const sanitizeRing = (ring: any): Ring => {
+        const clean: Ring = [];
+        if (!Array.isArray(ring)) return clean;
+        for (const coord of ring) {
+          if (!Array.isArray(coord) || coord.length < 2) continue;
+          const x = Number(coord[0]);
+          const y = Number(coord[1]);
+          if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+          clean.push([x, y]);
         }
-        return coords;
+        if (clean.length >= 3) {
+          const [sx, sy] = clean[0];
+          const [ex, ey] = clean[clean.length - 1];
+          if (sx !== ex || sy !== ey) clean.push([sx, sy]);
+        }
+        return clean.length >= 4 ? clean : [];
       };
 
-      // Helper: normalize geometry, including GeometryCollection
-      const normalizeGeometry = (geom: any): any => {
+      const sanitizePolygon = (coords: any): Poly => {
+        if (!Array.isArray(coords)) return [];
+        return (coords as any[])
+          .map((ring) => sanitizeRing(ring))
+          .filter((ring) => ring.length >= 4);
+      };
+
+      const sanitizeGeometry = (
+        geom: any
+      ):
+        | { type: "Polygon"; coordinates: Poly }
+        | { type: "MultiPolygon"; coordinates: Poly[] }
+        | null => {
         if (!geom || !geom.type) return null;
         const t = String(geom.type);
-        const normalized: any = { type: t };
-
         if (t === "Polygon") {
-          const rings = normalizeCoordinates(geom.coordinates) as any[]; // array of rings
-          const clean = (rings || []).filter(
-            (ring: any[]) => Array.isArray(ring) && ring.length >= 4
-          );
-          if (!clean.length) return null;
-          normalized.coordinates = clean;
-          return normalized;
+          const rings = sanitizePolygon(geom.coordinates);
+          return rings.length ? { type: "Polygon", coordinates: rings } : null;
         }
-
         if (t === "MultiPolygon") {
           const polys = (geom.coordinates || [])
-            .map((poly: any) => {
-              const rings = normalizeCoordinates(poly) as any[];
-              const clean = (rings || []).filter(
-                (ring: any[]) => Array.isArray(ring) && ring.length >= 4
-              );
-              return clean.length ? clean : null;
-            })
-            .filter(Boolean);
-          if (!polys.length) return null;
-          normalized.coordinates = polys;
-          return normalized;
+            .map((poly: any) => sanitizePolygon(poly))
+            .filter((rings: Poly) => rings.length);
+          return polys.length
+            ? { type: "MultiPolygon", coordinates: polys }
+            : null;
         }
-
         if (t === "GeometryCollection") {
-          const polys: any[] = [];
-          for (const g of geom.geometries || []) {
-            const n = normalizeGeometry(g);
-            if (!n) continue;
-            if (n.type === "Polygon") polys.push(n.coordinates);
-            else if (n.type === "MultiPolygon") polys.push(...n.coordinates);
+          const polys: Poly[] = [];
+          for (const part of geom.geometries || []) {
+            const sanitized = sanitizeGeometry(part);
+            if (!sanitized) continue;
+            if (sanitized.type === "Polygon") {
+              polys.push(sanitized.coordinates);
+            } else if (sanitized.type === "MultiPolygon") {
+              polys.push(...sanitized.coordinates);
+            }
           }
           if (!polys.length) return null;
           if (polys.length === 1) {
@@ -602,210 +603,236 @@ export default function TaxMap() {
           }
           return { type: "MultiPolygon", coordinates: polys };
         }
-
-        // other geometry types are ignored
         return null;
       };
 
-      // Normalize the feature collection
+      const originalCount = Array.isArray(featureCollection?.features)
+        ? featureCollection.features.length
+        : 0;
+      const normalizedFeatures = Array.isArray(featureCollection?.features)
+        ? (featureCollection.features as any[])
+            .map((feat: any) => {
+              if (!feat || !feat.geometry) return null;
+              const g = sanitizeGeometry(feat.geometry);
+              return g ? { ...feat, geometry: g } : null;
+            })
+            .filter(Boolean)
+        : [];
       const normalizedFC = {
         ...featureCollection,
-        features: (featureCollection.features || [])
-          .map((feat: any) => {
-            if (!feat || !feat.geometry) return null;
-            const g = normalizeGeometry(feat.geometry);
-            return g ? { ...feat, geometry: g } : null;
-          })
-          .filter(Boolean),
+        features: normalizedFeatures,
       };
 
-      if (normalizedFC.features.length === 0) {
-        console.warn(
-          "No valid features found after normalization, trying raw OL read + manual builder"
-        );
-        // lanjut ke readFeatures atau manual
-      }
+      console.log(
+        `Normalization produced ${normalizedFC.features.length} feature(s) from ${originalCount}`
+      );
 
-      // Pilih FC yang masuk akal untuk deteksi CRS dan fallback
       const fcForDetection =
         normalizedFC.features.length > 0 ? normalizedFC : featureCollection;
-
-      // Detect CRS
-      const dataProjection = detectDataProjectionFromFC(fcForDetection);
+      const hintedProjection = metaCrsHint;
+      const dataProjection =
+        hintedProjection ?? detectDataProjectionFromFC(fcForDetection);
+      console.log(
+        "Using dataProjection:",
+        dataProjection,
+        "hint:",
+        hintedProjection ?? "auto"
+      );
       const fmt = geojsonFmtRef.current!;
+      const sourceForRead =
+        normalizedFC.features.length > 0 ? normalizedFC : featureCollection;
 
       /* ======================= OL readFeatures terlebih dulu ======================= */
-      let feats: any[] = [];
-      try {
-        const sourceFC =
-          normalizedFC.features.length > 0 ? normalizedFC : fcForDetection;
+      const swapCoordsDeep = (coords: any): any => {
+        if (!Array.isArray(coords)) return coords;
+        if (
+          coords.length >= 2 &&
+          typeof coords[0] === "number" &&
+          typeof coords[1] === "number"
+        ) {
+          const rest = coords.length > 2 ? coords.slice(2) : [];
+          return [coords[1], coords[0], ...rest];
+        }
+        return coords.map((part: any) => swapCoordsDeep(part));
+      };
 
-        feats = fmt.readFeatures(sourceFC, {
-          dataProjection,
-          featureProjection: "EPSG:3857",
-        }) as any[];
-
-        // Kalau masih kosong, coba swap koordinat di source dan baca lagi
-        if (!feats.length) {
-          const swapCoords = (coords: any): any => {
-            if (!Array.isArray(coords)) return coords;
-            if (Array.isArray(coords[0]))
-              return coords.map((c: any) => swapCoords(c));
-            return [coords[1], coords[0]];
+      const createSwappedFC = (source: any) => ({
+        ...source,
+        features: (source.features || []).map((feat: any) => {
+          if (!feat?.geometry) return feat;
+          return {
+            ...feat,
+            geometry: {
+              ...feat.geometry,
+              coordinates: swapCoordsDeep(feat.geometry.coordinates),
+            },
           };
+        }),
+      });
 
-          const swappedFC = {
-            ...sourceFC,
-            features: (sourceFC.features || []).map((feat: any) =>
-              feat?.geometry
-                ? {
-                    ...feat,
-                    geometry: {
-                      ...feat.geometry,
-                      coordinates: swapCoords(feat.geometry.coordinates),
-                    },
-                  }
-                : feat
-            ),
-          };
-
-          feats = fmt.readFeatures(swappedFC as any, {
+      const orderPreference: boolean[] =
+        metaOrderHint === "yx" ? [true, false] : [false, true];
+      let swapAttempted = false;
+      let swapUsed = false;
+      let feats: Feature<Geometry>[] = [];
+      for (const shouldSwap of orderPreference) {
+        const fcToRead = shouldSwap
+          ? createSwappedFC(sourceForRead)
+          : sourceForRead;
+        if (shouldSwap) swapAttempted = true;
+        try {
+          const parsed = fmt.readFeatures(fcToRead, {
             dataProjection,
             featureProjection: "EPSG:3857",
-          }) as any[];
+          }) as Feature<Geometry>[];
+          if (parsed.length) {
+            feats = parsed;
+            swapUsed = shouldSwap;
+            break;
+          }
+        } catch (error) {
+          console.error("Error parsing features:", error);
         }
-      } catch (error) {
-        console.error("Error parsing features:", error);
       }
+      console.log(
+        "Coordinate swap attempted:",
+        swapAttempted,
+        "used:",
+        swapUsed
+      );
 
-      /* ======= MANUAL FALLBACK DENGAN VALIDASI & ORDER XY/YX ======= */
-      // builder aman: buang titik invalid, cek hasil proyeksi, tutup ring
-      const manualBuildFeatures = (
-        baseFC: any,
-        order: "xy" | "yx"
-      ): Feature<Geometry>[] => {
-        const project = (xy: [number, number]) =>
-          dataProjection === "EPSG:4326" ? fromLonLat(xy) : xy;
-
-        const buildRing = (ring: any[]): [number, number][] => {
-          const out: [number, number][] = [];
-          for (const c of ring || []) {
-            if (!Array.isArray(c) || c.length < 2) continue;
-            let x = Number(c[0]),
-              y = Number(c[1]);
-            if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-
-            const pair =
-              order === "xy"
-                ? ([x, y] as [number, number])
-                : ([y, x] as [number, number]);
-
-            const pj = project(pair);
-            const px = Number(pj[0]),
-              py = Number(pj[1]);
-            if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
-
-            out.push([px, py]);
-          }
-          if (out.length >= 3) {
-            const [fx, fy] = out[0];
-            const [lx, ly] = out[out.length - 1];
-            if (fx !== lx || fy !== ly) out.push([fx, fy]);
-          }
-          return out.length >= 4 ? out : [];
-        };
-
-        const srcFeats = (baseFC.features || []) as any[];
-
-        const built = srcFeats
-          .map((feat: any) => {
-            // Try normalized geometry; if null, fall back to raw geometry
-            const norm = normalizeGeometry(feat.geometry);
-            const geomToUse: any = norm || feat.geometry || {};
-            const type = String(geomToUse?.type || "").toLowerCase();
-            const coords = geomToUse?.coordinates;
-
-            if (type === "multipolygon" && Array.isArray(coords)) {
-              const polys = coords
-                .map((poly: any) => {
-                  // each poly is array of rings
-                  if (!Array.isArray(poly)) return null;
-                  const rings = (poly as any[])
-                    .map((ring: any) => buildRing(ring))
-                    .filter((r: any[]) => r.length >= 4);
-                  return rings.length ? rings : null;
-                })
-                .filter(Boolean);
-              if (!polys.length) return null;
-              const geom = new MultiPolygon(polys as any);
-              const f = new Feature(geom);
-              f.setProperties(feat.properties || {});
-              return f;
-            }
-
-            if (type === "polygon" && Array.isArray(coords)) {
-              const rings = (coords as any[])
-                .map((ring: any) => buildRing(ring))
-                .filter((r: any[]) => r.length >= 4);
-              if (!rings.length) return null;
-              const geom = new Polygon(rings as any);
-              const f = new Feature(geom);
-              f.setProperties(feat.properties || {});
-              return f;
-            }
-
-            return null;
-          })
-          .filter((f: any) => f !== null);
-
-        return built as Feature<Geometry>[];
-      };
-
-      // Jika OL gagal (atau hasilnya kosong/extent invalid), coba manual XY lalu YX
-      const requireValid = (arr: Feature<Geometry>[]) => {
-        return arr.filter((ft) => {
-          const g = ft.getGeometry?.();
-          if (!g) return false;
-          const e = g.getExtent();
+      const filterValidFeatures = (arr: Feature<Geometry>[]) =>
+        arr.filter((ft) => {
+          const geom = ft.getGeometry?.();
+          if (!geom) return false;
+          const extent = geom.getExtent();
           return (
-            Number.isFinite(e[0]) &&
-            Number.isFinite(e[1]) &&
-            Number.isFinite(e[2]) &&
-            Number.isFinite(e[3])
+            Number.isFinite(extent[0]) &&
+            Number.isFinite(extent[1]) &&
+            Number.isFinite(extent[2]) &&
+            Number.isFinite(extent[3]) &&
+            extent[2] > extent[0] &&
+            extent[3] > extent[1]
           );
         });
-      };
 
-      // Apabila readFeatures gagal total (feats kosong), atau hasil yang didapat
-      // tidak memiliki extent yang valid setelah filter, gunakan manual
-      // fallback builder dengan dua percobaan order koordinat (xy dan yx).
-      const buildManualFallback = () => {
-        const baseFC =
-          normalizedFC.features.length > 0 ? normalizedFC : featureCollection;
-        let manual = manualBuildFeatures(baseFC, "xy");
-        let valid = requireValid(manual);
-        if (!valid.length) {
-          manual = manualBuildFeatures(baseFC, "yx");
-          valid = requireValid(manual);
+      feats = filterValidFeatures(feats);
+
+      const manualBase =
+        normalizedFC.features.length > 0
+          ? normalizedFC.features
+          : Array.isArray(featureCollection?.features)
+          ? (featureCollection.features as any[])
+              .map((feat: any) => {
+                if (!feat || !feat.geometry) return null;
+                const g = sanitizeGeometry(feat.geometry);
+                return g ? { ...feat, geometry: g } : null;
+              })
+              .filter(Boolean)
+          : [];
+
+      const manualBuildFeatures = (order: "xy" | "yx"): Feature<Geometry>[] => {
+        const projectPair = (pair: [number, number]): [number, number] => {
+          const ordered =
+            order === "xy"
+              ? (pair as [number, number])
+              : ([pair[1], pair[0]] as [number, number]);
+          if (dataProjection === "EPSG:4326") {
+            const projected = fromLonLat(ordered);
+            return [Number(projected[0]), Number(projected[1])];
+          }
+          return [ordered[0], ordered[1]];
+        };
+
+        const projectRing = (ring: Ring): Ring => {
+          const projected: Ring = [];
+          for (const coord of ring) {
+            const x = Number(coord[0]);
+            const y = Number(coord[1]);
+            if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+            const pj = projectPair([x, y]);
+            if (!Number.isFinite(pj[0]) || !Number.isFinite(pj[1])) continue;
+            projected.push(pj);
+          }
+          if (projected.length >= 3) {
+            const [sx, sy] = projected[0];
+            const [ex, ey] = projected[projected.length - 1];
+            if (sx !== ex || sy !== ey) projected.push([sx, sy]);
+          }
+          return projected.length >= 4 ? projected : [];
+        };
+
+        const built: Feature<Geometry>[] = [];
+        for (const feat of manualBase as any[]) {
+          const geom = feat?.geometry;
+          if (!geom || !geom.type) continue;
+          const props = feat?.properties || {};
+
+          if (geom.type === "Polygon") {
+            const rings = (geom.coordinates || [])
+              .map((ring: any) => projectRing(ring as Ring))
+              .filter((ring: Ring) => ring.length >= 4);
+            if (!rings.length) continue;
+            const polygon = new Polygon(rings);
+            const f = new Feature(polygon);
+            f.setProperties(props);
+            built.push(f);
+            continue;
+          }
+
+          if (geom.type === "MultiPolygon") {
+            const polys = (geom.coordinates || [])
+              .map((poly: any) => {
+                const rings = (poly || [])
+                  .map((ring: any) => projectRing(ring as Ring))
+                  .filter((ring: Ring) => ring.length >= 4);
+                return rings.length ? rings : null;
+              })
+              .filter(Boolean) as Poly[];
+            if (!polys.length) continue;
+            const multi = new MultiPolygon(polys as any);
+            const f = new Feature(multi);
+            f.setProperties(props);
+            built.push(f);
+          }
         }
-        return valid;
+        return built;
       };
 
+      let manualOrderUsed: "xy" | "yx" | null = null;
       if (!feats.length) {
-        // Jika tidak ada fitur sama sekali dari OL, langsung ke manual fallback
-        feats = buildManualFallback();
-      } else {
-        // Jika hasil OL ada, filter yang valid terlebih dahulu
-        feats = requireValid(feats);
-        if (!feats.length) {
-          // Tidak ada geometri valid, coba manual
-          feats = buildManualFallback();
+        const manualOrders =
+          metaOrderHint === "yx"
+            ? (["yx", "xy"] as const)
+            : (["xy", "yx"] as const);
+        for (const ord of manualOrders) {
+          const manual = manualBuildFeatures(ord);
+          const validManual = filterValidFeatures(manual);
+          if (validManual.length) {
+            feats = validManual;
+            manualOrderUsed = ord;
+            break;
+          }
         }
+        if (manualOrderUsed) {
+          console.log("Manual builder succeeded with order:", manualOrderUsed);
+        } else if (manualBase.length) {
+          console.log("Manual builder attempted but no valid features.");
+        }
+      } else {
+        console.log("Manual builder not needed.");
       }
+
+      feats = filterValidFeatures(feats);
 
       if (!feats.length) {
         console.warn(
-          "Semua fitur punya extent kosong setelah import atau manual fallback gagal."
+          "All features have empty extents after import/manual fallback.",
+          {
+            key,
+            crsHint: metaCrsHint,
+            orderHint: metaOrderHint,
+          }
         );
         return;
       }
