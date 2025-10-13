@@ -2784,7 +2784,7 @@ export default function LeftDock() {
                 onClick={() => startDraw()}
                 disabled={uiMode === "draw"}
               >
-                <span className="icon">shape_line</span>
+                <span className="icon">pentagon</span>
               </button>
               <button
                 className={`circle ${isMultiMode ? "" : "ghost"}`}
