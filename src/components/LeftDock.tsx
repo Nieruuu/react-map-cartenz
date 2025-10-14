@@ -1,4 +1,4 @@
-// src/components/LeftDock.tsx
+﻿// src/components/LeftDock.tsx
 import { useRef, useState, useEffect } from "react";
 import VectorLayer from "ol/layer/Vector";
 import VectorSource from "ol/source/Vector";
@@ -46,7 +46,7 @@ declare global {
   }
 }
 
-/** UMD @crmackey/shp-write via jsDelivr → unpkg (fallback) */
+/** UMD @crmackey/shp-write via jsDelivr -> unpkg (fallback) */
 async function ensureShpWriterReady(): Promise<any> {
   if (window.shpwriter && typeof window.shpwriter.zip === "function") {
     return window.shpwriter;
@@ -134,7 +134,7 @@ async function ensureShpWriterReady(): Promise<any> {
   return window.__shpwriterLoading__;
 }
 
-/** UMD shp-write klasik via jsDelivr → unpkg (fallback) */
+/** UMD shp-write klasik via jsDelivr -> unpkg (fallback) */
 async function ensureShpWriteClassicReady(): Promise<any> {
   if (window.shpwrite && typeof window.shpwrite.zip === "function")
     return window.shpwrite;
@@ -356,95 +356,96 @@ type NormalizedPolygonGeometry =
   | { type: "MultiPolygon"; coordinates: PolygonRings[] };
 
 /* ---------- Util: normalisasi geometri polygon ---------- */
-const EPSILON = 1e-9;
-const MIN_RING_AREA = 1e-12;
+const COORD_TOLERANCE = 1e-9;
 
 type NormalizeOptions = {
   allowDegenerate?: boolean;
 };
 
-function almostEqual(a: number, b: number): boolean {
-  return Math.abs(a - b) <= EPSILON;
+function numbersEqual(a: number, b: number) {
+  return Math.abs(a - b) <= COORD_TOLERANCE;
 }
 
-function ringArea(ring: [number, number][]): number {
-  let area = 0;
-  for (let i = 0; i < ring.length - 1; i++) {
-    const [x1, y1] = ring[i];
-    const [x2, y2] = ring[i + 1];
-    area += x1 * y2 - x2 * y1;
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
   }
-  return area / 2;
-}
-
-function toXY(coord: any): [number, number] | null {
-  if (Array.isArray(coord) && coord.length >= 2) {
-    const x = Number(coord[0]);
-    const y = Number(coord[1]);
-    if (Number.isFinite(x) && Number.isFinite(y)) return [x, y];
-    return null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const num = Number(trimmed);
+    return Number.isFinite(num) ? num : null;
   }
-
-  if (
-    coord &&
-    typeof coord === "object" &&
-    Number.isFinite(Number((coord as any).x)) &&
-    Number.isFinite(Number((coord as any).y))
-  ) {
-    const x = Number((coord as any).x);
-    const y = Number((coord as any).y);
-    return [x, y];
-  }
-
   return null;
 }
 
-function ensureClosedRing(points: [number, number][]): [number, number][] {
+function readCoordinate(candidate: any): [number, number] | null {
+  if (Array.isArray(candidate) && candidate.length >= 2) {
+    const x = toFiniteNumber(candidate[0]);
+    const y = toFiniteNumber(candidate[1]);
+    if (x == null || y == null) return null;
+    return [x, y];
+  }
+  if (candidate && typeof candidate === "object") {
+    const obj = candidate as Record<string, unknown>;
+    const x =
+      toFiniteNumber(obj.x) ??
+      toFiniteNumber(obj.X) ??
+      toFiniteNumber((obj as any).lon) ??
+      toFiniteNumber((obj as any).longitude);
+    const y =
+      toFiniteNumber(obj.y) ??
+      toFiniteNumber(obj.Y) ??
+      toFiniteNumber((obj as any).lat) ??
+      toFiniteNumber((obj as any).latitude);
+    if (x != null && y != null) return [x, y];
+  }
+  return null;
+}
+
+function closeRing(points: [number, number][]): [number, number][] {
   if (!points.length) return [];
   const first = points[0];
   const last = points[points.length - 1];
-  if (!almostEqual(first[0], last[0]) || !almostEqual(first[1], last[1])) {
+  if (!numbersEqual(first[0], last[0]) || !numbersEqual(first[1], last[1])) {
     return [...points, [first[0], first[1]]];
   }
   const cloned = points.slice();
-  const [lx, ly] = cloned[cloned.length - 1];
-  cloned[cloned.length - 1] = [lx, ly];
+  cloned[cloned.length - 1] = [last[0], last[1]];
   return cloned;
 }
 
-function normalizePolygonRing(
+function sanitizeLinearRing(
   input: any,
-  options: NormalizeOptions = {}
-): [number, number][] {
-  if (!Array.isArray(input)) return [];
+  allowDegenerate: boolean
+): [number, number][] | null {
+  if (!Array.isArray(input)) return null;
 
   const cleaned: [number, number][] = [];
   let prev: [number, number] | null = null;
 
-  for (const coord of input) {
-    const point = toXY(coord);
-    if (!point) continue;
-
+  for (const candidate of input) {
+    const coord = readCoordinate(candidate);
+    if (!coord) continue;
     if (
-      !prev ||
-      !almostEqual(point[0], prev[0]) ||
-      !almostEqual(point[1], prev[1])
+      prev &&
+      numbersEqual(coord[0], prev[0]) &&
+      numbersEqual(coord[1], prev[1])
     ) {
-      cleaned.push(point);
-      prev = point;
+      continue;
     }
+    cleaned.push([coord[0], coord[1]]);
+    prev = coord;
   }
 
-  if (cleaned.length < 3) return [];
+  if (cleaned.length < 3) return null;
 
-  const closed = ensureClosedRing(cleaned);
-  if (closed.length < 4) return [];
+  const unique = new Set(cleaned.map((pt) => `${pt[0]}|${pt[1]}`));
+  if (unique.size < 3 && !allowDegenerate) return null;
 
-  const area = Math.abs(ringArea(closed));
-  if (!Number.isFinite(area)) return [];
-  if (area <= MIN_RING_AREA && !options.allowDegenerate) return [];
-
-  return closed.map(([x, y]) => [x, y] as [number, number]);
+  const closed = closeRing(cleaned);
+  if (closed.length < 4) return null;
+  return closed;
 }
 
 function normalizePolygonRings(
@@ -453,9 +454,14 @@ function normalizePolygonRings(
 ): PolygonRings {
   if (!Array.isArray(input)) return [];
   const rings: PolygonRings = [];
-  for (const ring of input) {
-    const normalized = normalizePolygonRing(ring, options);
-    if (normalized.length >= 4) rings.push(normalized);
+  for (const candidate of input) {
+    const ring = sanitizeLinearRing(
+      candidate,
+      Boolean(options.allowDegenerate)
+    );
+    if (ring) {
+      rings.push(ring.map(([x, y]) => [x, y] as [number, number]));
+    }
   }
   return rings;
 }
@@ -464,48 +470,10 @@ function clonePolygonCoordinates(rings: PolygonRings): PolygonRings {
   return rings.map((ring) => ring.map(([x, y]) => [x, y] as [number, number]));
 }
 
-function looksLikeLinearRing(candidate: any): boolean {
-  if (!Array.isArray(candidate) || candidate.length < 3) return false;
-  return candidate.every((coord: any) => toXY(coord) !== null);
-}
-
-function extractRingArrays(input: any): any[] {
-  if (!Array.isArray(input)) return [];
-  if (looksLikeLinearRing(input)) return [input];
-  const rings: any[] = [];
-  for (const item of input) {
-    if (looksLikeLinearRing(item)) {
-      rings.push(item);
-    } else if (Array.isArray(item)) {
-      rings.push(...extractRingArrays(item));
-    }
-  }
-  return rings;
-}
-
-function ringOrientation(ring: [number, number][]): number {
-  const area = ringArea(ring);
-  if (!Number.isFinite(area) || Math.abs(area) <= EPSILON) return 0;
-  return area > 0 ? 1 : -1;
-}
-
-function groupNormalizedRings(rings: PolygonRings): PolygonRings[] {
-  if (!rings.length) return [];
-  const firstOrient = ringOrientation(rings[0]) || 1;
-  const polygons: PolygonRings[] = [];
-  let current: PolygonRings | null = null;
-
-  rings.forEach((ring, idx) => {
-    const orient = ringOrientation(ring) || firstOrient;
-    if (!current || idx === 0 || orient === firstOrient) {
-      current = [ring];
-      polygons.push(current);
-    } else {
-      current.push(ring);
-    }
-  });
-
-  return polygons;
+function cloneMultiPolygonCoordinates(
+  polygons: PolygonRings[]
+): PolygonRings[] {
+  return polygons.map((poly) => clonePolygonCoordinates(poly));
 }
 
 function normalizePolygonGeometry(
@@ -515,180 +483,98 @@ function normalizePolygonGeometry(
 
   const rawType = typeof geomObj.type === "string" ? geomObj.type : "";
   const type = rawType.toLowerCase();
-  const isPolygonLike = /polygon/.test(type);
-  const isMulti = /^multi/.test(type);
 
   if (type === "geometrycollection") {
     const geometries = Array.isArray(geomObj.geometries)
       ? geomObj.geometries
       : [];
     const collected: PolygonRings[] = [];
-    geometries.forEach((geometry: any) => {
-      const normalized = normalizePolygonGeometry(geometry);
-      if (!normalized) return;
+    for (const part of geometries) {
+      const normalized = normalizePolygonGeometry(part);
+      if (!normalized) continue;
       if (normalized.type === "Polygon") {
-        const coords = normalized.coordinates;
-        collected.push(clonePolygonCoordinates(coords));
-      } else if (normalized.type === "MultiPolygon") {
-        const polys = normalized.coordinates;
-        polys.forEach((poly: PolygonRings) => {
-          collected.push(clonePolygonCoordinates(poly));
-        });
+        collected.push(clonePolygonCoordinates(normalized.coordinates));
+      } else {
+        normalized.coordinates.forEach((poly) =>
+          collected.push(clonePolygonCoordinates(poly))
+        );
       }
-    });
+    }
     if (!collected.length) return null;
     if (collected.length === 1) {
       return { type: "Polygon", coordinates: collected[0] };
     }
-    return {
-      type: "MultiPolygon",
-      coordinates: collected.map((poly) => clonePolygonCoordinates(poly)),
-    };
+    return { type: "MultiPolygon", coordinates: collected };
   }
 
-  if (!isPolygonLike) return null;
+  if (type === "polygon") {
+    const coordsSource =
+      Array.isArray(geomObj.coordinates) && geomObj.coordinates.length
+        ? geomObj.coordinates
+        : Array.isArray((geomObj as any).rings)
+        ? (geomObj as any).rings
+        : [];
+    const rings = normalizePolygonRings(coordsSource);
+    if (!rings.length) return null;
+    return { type: "Polygon", coordinates: rings };
+  }
 
-  const sources =
-    Array.isArray(geomObj.coordinates) && geomObj.coordinates.length
+  if (type === "multipolygon") {
+    const sources = Array.isArray(geomObj.coordinates)
       ? geomObj.coordinates
-      : Array.isArray((geomObj as any).rings)
-      ? (geomObj as any).rings
       : [];
-
-  const clonePoly = (poly: PolygonRings) => clonePolygonCoordinates(poly);
-  const polygons: PolygonRings[] = [];
-
-  if (isMulti) {
-    const polygonCandidates = Array.isArray(sources) ? sources : [];
-    polygonCandidates.forEach((polyCandidate) => {
-      const ringCandidates = extractRingArrays(polyCandidate);
-      if (!ringCandidates.length) return;
-      let normalized = normalizePolygonRings(ringCandidates);
-      if (!normalized.length) {
-        normalized = normalizePolygonRings(ringCandidates, {
-          allowDegenerate: true,
-        });
-      }
-      if (normalized.length) {
-        polygons.push(normalized);
-      }
-    });
-
-    if (!polygons.length) {
-      const fallbackRings = normalizePolygonRings(extractRingArrays(sources), {
-        allowDegenerate: true,
-      });
-      if (fallbackRings.length) {
-        const grouped = groupNormalizedRings(fallbackRings);
-        grouped.forEach((poly) => {
-          if (poly.length) polygons.push(poly);
-        });
-      }
+    const polygons: PolygonRings[] = [];
+    for (const poly of sources) {
+      const rings = normalizePolygonRings(poly);
+      if (rings.length) polygons.push(rings);
     }
-  } else {
-    const ringCandidates = extractRingArrays(sources);
-    if (!ringCandidates.length) return null;
-    let normalized = normalizePolygonRings(ringCandidates);
-    if (!normalized.length) {
-      normalized = normalizePolygonRings(ringCandidates, {
-        allowDegenerate: true,
-      });
-    }
-    if (!normalized.length) return null;
-    polygons.push(normalized);
+    if (!polygons.length) return null;
+    return { type: "MultiPolygon", coordinates: polygons };
   }
 
-  if (!polygons.length) return null;
-
-  if (!isMulti && polygons.length === 1) {
-    return { type: "Polygon", coordinates: clonePoly(polygons[0]) };
-  }
-
-  return {
-    type: "MultiPolygon",
-    coordinates: polygons.map((poly) => clonePoly(poly)),
-  };
+  return null;
 }
 
 function sanitizeFeatureCollection(fc: any) {
-  if (!fc) return null;
-  const features = Array.isArray(fc.features) ? fc.features : [];
-  type SimpleFeature = {
-    type: "Feature";
-    properties: Record<string, any>;
-    geometry: any;
-  };
-  const sanitizedFeatures: SimpleFeature[] = features
+  if (!fc || !Array.isArray(fc.features)) return null;
+  const sanitized = fc.features
     .map((feat: any) => {
-      // Handle both Polygon and MultiPolygon geometries
-      const geomObj = normalizePolygonGeometry(feat?.geometry);
-      if (!geomObj) return null;
+      const geom = normalizePolygonGeometry(feat?.geometry);
+      if (!geom) return null;
       const props =
         feat && typeof feat === "object" ? { ...(feat.properties || {}) } : {};
-      return {
+      const base = {
         type: "Feature",
         properties: props,
-        geometry: geomObj,
-      } as SimpleFeature | null;
-    })
-    .filter(
-      (feat: SimpleFeature | null): feat is SimpleFeature => feat !== null
-    );
-
-  if (!sanitizedFeatures.length) return null;
-  return {
-    ...(typeof fc === "object" && fc !== null ? { ...fc } : {}),
-    type: "FeatureCollection",
-    features: sanitizedFeatures,
-  };
-}
-
-function fallbackNormalizeFeatureCollection(fc: any, fmtInstance: GeoJSON) {
-  if (!fc) return null;
-  const fmt = fmtInstance || new GeoJSON();
-  try {
-    const fallbackFeatures = fmt.readFeatures(fc, {
-      dataProjection: "EPSG:4326",
-      featureProjection: "EPSG:4326",
-    }) as OLFeature<Geometry>[];
-    if (!fallbackFeatures.length) return null;
-    const normalized = fallbackFeatures
-      .map((feature) => {
-        const geometry = feature.getGeometry();
-        if (!geometry) return null;
-        const rawFeature = fmt.writeFeatureObject(feature, {
-          dataProjection: "EPSG:4326",
-          featureProjection: "EPSG:4326",
-          rightHanded: false,
-          decimals: 12,
-        }) as any;
-        const normalizedGeom = normalizePolygonGeometry(rawFeature?.geometry);
-        if (!normalizedGeom) return null;
-        const props =
-          rawFeature && typeof rawFeature === "object"
-            ? { ...(rawFeature.properties || {}) }
-            : {};
-        const normalizedFeature: any = {
-          type: "Feature",
-          properties: props,
-          geometry: normalizedGeom,
+      } as {
+        type: "Feature";
+        properties: Record<string, any>;
+        geometry: any;
+        id?: string | number;
+      };
+      if (geom.type === "Polygon") {
+        base.geometry = {
+          type: "Polygon",
+          coordinates: clonePolygonCoordinates(geom.coordinates),
         };
-        if (rawFeature?.id != null) {
-          normalizedFeature.id = rawFeature.id;
-        }
-        return normalizedFeature;
-      })
-      .filter((feat) => !!feat);
-    if (!normalized.length) return null;
-    return {
-      ...(typeof fc === "object" && fc !== null ? { ...fc } : {}),
-      type: "FeatureCollection",
-      features: normalized,
-    };
-  } catch (error) {
-    console.warn("Fallback normalization failed:", error);
-    return null;
-  }
+      } else {
+        base.geometry = {
+          type: "MultiPolygon",
+          coordinates: cloneMultiPolygonCoordinates(geom.coordinates),
+        };
+      }
+      if (feat && typeof feat === "object" && "id" in feat && feat.id != null) {
+        base.id = feat.id;
+      }
+      return base;
+    })
+    .filter(Boolean);
+
+  if (!sanitized.length) return null;
+  return {
+    type: "FeatureCollection",
+    features: sanitized,
+  };
 }
 
 function flattenFeatureCollectionToPolygons(fc: {
@@ -696,52 +582,30 @@ function flattenFeatureCollectionToPolygons(fc: {
   features: any[];
 }) {
   const flattened: any[] = [];
-  fc.features.forEach((feature) => {
-    const geometry = feature?.geometry;
-    if (!geometry) return;
-    const baseProps = { ...(feature.properties || {}) };
-    if (geometry.type === "Polygon") {
-      let rings = normalizePolygonRings(geometry.coordinates);
-      if (!rings.length) {
-        rings = normalizePolygonRings(geometry.coordinates, {
-          allowDegenerate: true,
-        });
-      }
-      if (!rings.length) return;
+  for (const feature of fc.features || []) {
+    const normalized = normalizePolygonGeometry(feature?.geometry);
+    if (!normalized) continue;
+    const props = { ...(feature?.properties || {}) };
+    if (normalized.type === "Polygon") {
       flattened.push({
         type: "Feature",
-        properties: { ...baseProps },
+        properties: props,
         geometry: {
           type: "Polygon",
-          coordinates: clonePolygonCoordinates(rings),
+          coordinates: clonePolygonCoordinates(normalized.coordinates),
         },
       });
-    } else if (geometry.type === "MultiPolygon") {
-      const polygons = (geometry.coordinates || [])
-        .map((polyCoords: any) => {
-          let poly = normalizePolygonRings(polyCoords);
-          if (!poly.length) {
-            poly = normalizePolygonRings(polyCoords, {
-              allowDegenerate: true,
-            });
-          }
-          return poly;
-        })
-        .filter((poly: PolygonRings) => poly.length > 0);
-      if (!polygons.length) return;
+    } else {
       flattened.push({
         type: "Feature",
-        properties: { ...baseProps },
+        properties: props,
         geometry: {
           type: "MultiPolygon",
-          coordinates: polygons.map((poly: PolygonRings) =>
-            clonePolygonCoordinates(poly)
-          ),
+          coordinates: cloneMultiPolygonCoordinates(normalized.coordinates),
         },
       });
     }
-  });
-
+  }
   return { type: "FeatureCollection", features: flattened };
 }
 
@@ -772,15 +636,18 @@ export default function LeftDock() {
     // Debug function for testing export functionality
     (window as any).debugExport = async () => {
       console.log("=== Export Debug Information ===");
-      console.log("Mapshaper:", window.mapshaper ? "✓ Loaded" : "✗ Not loaded");
-      console.log("Zip.js:", window.zip ? "✓ Loaded" : "✗ Not loaded");
+      console.log(
+        "Mapshaper:",
+        window.mapshaper ? "[OK] Loaded" : "[X] Not loaded"
+      );
+      console.log("Zip.js:", window.zip ? "[OK] Loaded" : "[X] Not loaded");
       console.log(
         "@crmackey/shp-write:",
-        window.shpwriter ? "✓ Loaded" : "✗ Not loaded"
+        window.shpwriter ? "[OK] Loaded" : "[X] Not loaded"
       );
       console.log(
         "Classic shp-write:",
-        window.shpwrite ? "✓ Loaded" : "✗ Not loaded"
+        window.shpwrite ? "[OK] Loaded" : "[X] Not loaded"
       );
 
       // Test library functions
@@ -944,227 +811,177 @@ export default function LeftDock() {
     if (nameVal) f.set("name", String(nameVal).trim());
   }
 
-  function detectLevelFromProps(features: any[]): Kind {
-    const p = features[0]?.getProperties ? features[0].getProperties() : {};
-    const keys = Object.keys(p || {});
-    const hasKec = keys.some((k) =>
-      /(^|_)KD_KEC$|^D_KD_KEC$|(^|_)NM_KEC$|^D_NM_KEC$|KECAMATAN|WADMKC/i.test(
-        k
-      )
-    );
-    const hasKab = keys.some((k) =>
-      /(^|_)KD_KAB$|^D_KD_DT2$|(^|_)NM_KAB$|^D_NM_DT2$|WADMKD/i.test(k)
-    );
-    const hasKel = keys.some((k) =>
-      /(^|_)KD_KEL$|^D_KD_KEL$|(^|_)NM_KEL$|^D_NM_KEL$|DESA/i.test(k)
-    );
-    if (hasKel) return "kelurahan";
-    if (hasKec) return "kecamatan";
-    if (hasKab) return "kabupaten";
+  function inferKindFromFeatureCollection(fc: any): Kind {
+    if (!fc || !Array.isArray(fc.features)) return "custom";
+    const patterns: Record<Exclude<Kind, "custom">, RegExp[]> = {
+      kelurahan: [
+        /(^|_)KD_?KEL($|_)/i,
+        /(^|_)D_KD_?KEL($|_)/i,
+        /(^|_)NM_?KEL($|_)/i,
+        /(^|_)D_NM_?KEL($|_)/i,
+        /DESA/i,
+      ],
+      kecamatan: [
+        /(^|_)KD_?KEC($|_)/i,
+        /(^|_)D_KD_?KEC($|_)/i,
+        /(^|_)NM_?KEC($|_)/i,
+        /(^|_)D_NM_?KEC($|_)/i,
+        /KECAMATAN/i,
+        /WADMKC/i,
+      ],
+      kabupaten: [
+        /(^|_)KD_?KAB($|_)/i,
+        /(^|_)D_KD_?DT2($|_)/i,
+        /(^|_)NM_?KAB($|_)/i,
+        /(^|_)D_NM_?DT2($|_)/i,
+        /KABUPATEN/i,
+        /WADMKD/i,
+      ],
+    };
+    const found: Record<Exclude<Kind, "custom">, boolean> = {
+      kelurahan: false,
+      kecamatan: false,
+      kabupaten: false,
+    };
+
+    for (const feature of fc.features) {
+      if (found.kelurahan && found.kecamatan && found.kabupaten) break;
+      const props =
+        feature && typeof feature === "object" ? feature.properties || {} : {};
+      if (!props || typeof props !== "object") continue;
+      const keys = Object.keys(props);
+      const strValues = Object.values(props).filter(
+        (v): v is string => typeof v === "string"
+      );
+      const matches = (regex: RegExp) =>
+        keys.some((k) => regex.test(k)) || strValues.some((v) => regex.test(v));
+
+      if (!found.kelurahan && patterns.kelurahan.some(matches)) {
+        found.kelurahan = true;
+      }
+      if (!found.kecamatan && patterns.kecamatan.some(matches)) {
+        found.kecamatan = true;
+      }
+      if (!found.kabupaten && patterns.kabupaten.some(matches)) {
+        found.kabupaten = true;
+      }
+    }
+
+    if (found.kelurahan) return "kelurahan";
+    if (found.kecamatan) return "kecamatan";
+    if (found.kabupaten) return "kabupaten";
     return "custom";
+  }
+
+  function datasetNameFromFile(fileName: string, kind: Kind): string {
+    const withoutExt = fileName.replace(/\.(zip|geojson|json|shp)$/i, "");
+    const cleaned = withoutExt
+      .replace(/[_\-]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const titled = cleaned
+      .split(" ")
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
+    const base = titled || withoutExt || "Dataset";
+    const labelMap: Record<Kind, string> = {
+      kabupaten: "Kabupaten",
+      kecamatan: "Kecamatan",
+      kelurahan: "Kelurahan",
+      custom: "Custom",
+    };
+    const label = labelMap[kind] || "Custom";
+    return `${base} (${label})`;
   }
 
   async function importFile(file: File) {
     if (!map) return;
-    const fmt = new GeoJSON();
-    let feats: any[] = [];
-    let fc4326: any = null;
 
-    const pickSampleCoordinate = (fc: any): [number, number] | null => {
-      if (!fc || !Array.isArray(fc.features)) return null;
-      const walkCoords = (coords: any): [number, number] | null => {
-        if (!Array.isArray(coords)) return null;
-        if (
-          coords.length >= 2 &&
-          typeof coords[0] === "number" &&
-          typeof coords[1] === "number"
-        ) {
-          const x = Number(coords[0]);
-          const y = Number(coords[1]);
-          if (Number.isFinite(x) && Number.isFinite(y)) {
-            return [x, y];
-          }
+    const extractFeatureCollection = (data: any): any => {
+      if (!data) return null;
+      if (data.type === "FeatureCollection" && Array.isArray(data.features)) {
+        return data;
+      }
+      if (Array.isArray(data)) {
+        const features = data.filter(
+          (item) => item && typeof item === "object" && item.type === "Feature"
+        );
+        if (features.length) {
+          return { type: "FeatureCollection", features };
         }
-        for (const part of coords) {
-          const found = walkCoords(part);
-          if (found) return found;
+      }
+      if (typeof data === "object") {
+        for (const value of Object.values(data)) {
+          const fc = extractFeatureCollection(value);
+          if (fc) return fc;
         }
-        return null;
-      };
-      for (const feat of fc.features) {
-        const geom = feat?.geometry;
-        if (!geom) continue;
-        const coords = geom.coordinates;
-        const found = walkCoords(coords);
-        if (found) return found;
       }
       return null;
     };
 
-    const inferCrsOrderHints = (
-      fc: any
-    ): {
-      crsHint?: "EPSG:4326" | "EPSG:3857";
-      orderHint?: "xy" | "yx";
-    } => {
-      const sample = pickSampleCoordinate(fc);
-      if (!sample) return {};
-      const [a, b] = sample;
-      const absA = Math.abs(a);
-      const absB = Math.abs(b);
-      const looksLonLat = absA <= 180 && absB <= 90;
-      const looksLatLon = absA <= 90 && absB <= 180;
-      if (looksLonLat && !looksLatLon) {
-        return { crsHint: "EPSG:4326", orderHint: "xy" };
-      }
-      if (looksLatLon && !looksLonLat) {
-        return { crsHint: "EPSG:4326", orderHint: "yx" };
-      }
-      if (looksLonLat && looksLatLon) {
-        // Ambiguous but within geographic range; default to xy order.
-        return { crsHint: "EPSG:4326", orderHint: "xy" };
-      }
-      return { crsHint: "EPSG:3857", orderHint: "xy" };
-    };
-
     try {
-      if (/\.geojson$/i.test(file.name)) {
-        const parsed = JSON.parse(await file.text());
-        const fc =
-          parsed?.type === "FeatureCollection"
-            ? parsed
-            : Object.values(parsed).find(
-                (v: any) => v && v.type === "FeatureCollection"
-              );
-        if (!fc) throw new Error("GeoJSON tidak valid");
-        fc4326 = fc;
-      } else {
-        const ab = await file.arrayBuffer();
+      let parsed: any = null;
+
+      if (/\.zip$/i.test(file.name)) {
+        const buffer = await file.arrayBuffer();
         try {
-          const parsed = await (shp as any)(ab);
-          const fc =
-            parsed?.type === "FeatureCollection"
-              ? parsed
-              : Object.values(parsed).find(
-                  (v: any) => v && v.type === "FeatureCollection"
-                );
-          if (!fc) throw new Error("Shapefile tidak ditemukan di dalam ZIP");
-          fc4326 = fc;
-        } catch (e) {
-          const hasParseZip = typeof (shp as any).parseZip === "function";
-          if (!hasParseZip) throw e;
-          const parsed2 = await (shp as any).parseZip(ab);
-          const fc2 =
-            parsed2?.type === "FeatureCollection"
-              ? parsed2
-              : Object.values(parsed2).find(
-                  (v: any) => v && v.type === "FeatureCollection"
-                );
-          if (!fc2) throw e;
-          fc4326 = fc2;
+          parsed = await (shp as any)(buffer);
+        } catch (err) {
+          if (typeof (shp as any).parseZip === "function") {
+            parsed = await (shp as any).parseZip(buffer);
+          } else {
+            throw err;
+          }
         }
+      } else if (/\.(geo)?json$/i.test(file.name)) {
+        const text = await file.text();
+        parsed = JSON.parse(text);
+      } else {
+        throw new Error("Format file tidak didukung. Pilih .zip atau .geojson");
       }
 
-      // 1) Coba sanitasi ketat
-      let sanitized = sanitizeFeatureCollection(fc4326);
-
-      // 2) Kalau gagal, coba fallback via OL roundtrip
-      if (!sanitized) {
-        const fallback = fallbackNormalizeFeatureCollection(fc4326, fmt);
-        if (fallback) sanitized = fallback;
+      const rawFC = extractFeatureCollection(parsed);
+      if (!rawFC) {
+        throw new Error("Tidak menemukan FeatureCollection di dalam file.");
       }
 
-      // 3) Kalau masih gagal, JANGAN throw. Ambil mentah tapi hanya Polygon/MultiPolygon
-      if (!sanitized) {
-        const onlyArea = {
-          type: "FeatureCollection",
-          features: Array.isArray(fc4326?.features)
-            ? fc4326.features.filter((f: any) => {
-                const t = f?.geometry?.type?.toLowerCase?.();
-                return t === "polygon" || t === "multipolygon";
-              })
-            : [],
-        };
-        // Minimal: asalkan masih ada fitur area, teruskan
-        if (onlyArea.features.length > 0) {
-          sanitized = onlyArea;
-        } else {
-          // benar-benar tidak ada geometri area
-          throw new Error(
-            "Data tidak memiliki geometri polygon atau MultiPolygon yang valid."
-          );
-        }
+      const sanitized = sanitizeFeatureCollection(rawFC);
+      if (
+        !sanitized ||
+        !Array.isArray(sanitized.features) ||
+        !sanitized.features.length
+      ) {
+        throw new Error(
+          "Tidak menemukan Polygon/MultiPolygon yang valid di dalam file."
+        );
       }
 
-      fc4326 = sanitized;
+      const datasetKind = inferKindFromFeatureCollection(sanitized);
+      const datasetName = datasetNameFromFile(file.name, datasetKind);
 
-      // 4) Tetap coba baca ke 3857. Kalau gagal, biarkan feats kosong saja.
-      //    LayerLoadModal + TaxMap akan meng-handle saat 'Load Peta'.
-      try {
-        feats = fmt.readFeatures(fc4326, {
-          dataProjection: "EPSG:4326",
-          featureProjection: "EPSG:3857",
-        }) as any[];
-      } catch {
-        feats = [];
-      }
-      // ...
-    } catch (e) {
-      alert("Gagal import file: " + (e as Error).message);
-      return;
+      const reg = ensureRegistry();
+      const key = `imp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+      reg.set(key, {
+        key,
+        name: datasetName,
+        kind: datasetKind,
+        fc: sanitized,
+        ts: Date.now(),
+        count: sanitized.features.length,
+        meta: { fileName: file.name },
+      });
+
+      window.dispatchEvent(new CustomEvent("datasets-updated"));
+      flash(
+        `Dataset ${datasetName} siap di-load (${sanitized.features.length} fitur).`
+      );
+    } catch (error) {
+      console.error("Import dataset gagal:", error);
+      const message = error instanceof Error ? error.message : String(error);
+      flash(`Gagal import: ${message}`, "err", 3400);
     }
-
-    // Jangan batal walau feats kosong.
-    // feats mungkin kosong, tapi fc4326 (sanitized) tetap bisa diload oleh TaxMap.
-    if (feats.length) {
-      feats.forEach((ft, i) => normalizeFeatureProps(ft, i));
-    }
-
-    // Jika feats kosong, coba deteksi level dari FC mentah agar labelnya tetap bagus
-    const detected =
-      feats.length > 0
-        ? detectLevelFromProps(feats)
-        : (() => {
-            const sampel = Array.isArray(fc4326?.features)
-              ? fc4326.features[0]
-              : null;
-            if (sampel && sampel.properties) {
-              const fake = { getProperties: () => sampel.properties };
-              return detectLevelFromProps([fake]);
-            }
-            return "custom";
-          })();
-
-    const baseName = file.name.replace(/\.(zip|json|geojson)$/i, "");
-    const displayName = baseName;
-
-    const reg = ensureRegistry();
-    const key = `imp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-
-    const savedCount = Array.isArray(fc4326?.features)
-      ? fc4326.features.length
-      : 0;
-
-    const hints = inferCrsOrderHints(fc4326);
-
-    reg.set(key, {
-      key,
-      name: displayName,
-      kind: detected,
-      fc: fc4326, // FeatureCollection yang sudah disanitasi (Polygon/MultiPolygon aman)
-      ts: Date.now(),
-      count: savedCount,
-      meta: {
-        fileName: file.name,
-        ...(hints.crsHint ? { crsHint: hints.crsHint } : {}),
-        ...(hints.orderHint ? { orderHint: hints.orderHint } : {}),
-      },
-    });
-
-    window.dispatchEvent(new CustomEvent("datasets-updated"));
-    alert(
-      `Import selesai: ${displayName}\n(${savedCount} fitur)\n\nUntuk menampilkan di peta, klik tombol "Load Peta".`
-    );
   }
 
   const onClickImport = () => fileInputRef.current?.click();
@@ -2526,7 +2343,7 @@ export default function LeftDock() {
     checks.forEach((lib) => {
       console.log(
         `${lib.name}:`,
-        lib.check() ? "✓ Available" : "✗ Not available"
+        lib.check() ? "[OK] Available" : "[X] Not available"
       );
     });
 
@@ -2540,7 +2357,7 @@ export default function LeftDock() {
     const failed = checks.filter((lib, index) => {
       const result = results[index];
       const isFailed = result.status === "rejected" || !lib.check();
-      console.log(`${lib.name}:`, isFailed ? "✗ Failed" : "✓ Ready");
+      console.log(`${lib.name}:`, isFailed ? "[X] Failed" : "[OK] Ready");
       if (result.status === "rejected") {
         console.error(`  Error:`, result.reason);
       }
