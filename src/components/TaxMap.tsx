@@ -1,6 +1,7 @@
 // src/components/TaxMap.tsx
 import { useEffect, useRef } from "react";
 import OlMap from "ol/Map";
+import ApiDebugPanel from "../dev/ApiDebugPanel";
 import View from "ol/View";
 import TileLayer from "ol/layer/Tile";
 import XYZ from "ol/source/XYZ";
@@ -1329,5 +1330,14 @@ export default function TaxMap() {
     });
   }, [selectedId, hoveredId]);
 
-  return <div ref={mapDiv} className="map" />;
+  return (
+    <>
+      <div ref={mapDiv} className="map" />
+      {import.meta.env.DEV && (
+        <div style={{ position: "fixed", top: 12, right: 12, zIndex: 99999 }}>
+          <ApiDebugPanel />
+        </div>
+      )}
+    </>
+  );
 }
