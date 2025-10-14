@@ -49,7 +49,7 @@ export const styleFromCfg = (cfg: LayerStyleCfg) => {
     undefined;
 
   return (f: FeatureLike) => {
-    const get = (k: string) => (f as any).get?.(k);
+    const get = (k: string) => (f as unknown as { get: (key: string) => unknown }).get?.(k);
 
     // nama/kode umum yang sering ada di data administrasi
     const nama =
@@ -195,7 +195,7 @@ export const useLayersStore = create<S>((set, get) => ({
       if (!L) return {};
       L.styleCfg = { ...L.styleCfg, ...patch };
       L.layer.setStyle(styleFromCfg(L.styleCfg)); // apply dengan cfg TERBARU
-      (L.layer as any).changed?.();
+      (L.layer as unknown as { changed?: () => void }).changed?.();
       return { layers: [...s.layers] };
     }),
 

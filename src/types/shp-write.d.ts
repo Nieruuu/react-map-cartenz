@@ -16,17 +16,17 @@ declare module '@crmackey/shp-write' {
 
   // API minimal yang kita pakai (callback-style)
   export function write(
-    rows: Record<string, any>[],
+    rows: Record<string, unknown>[],
     geometryType: GeometryType,
-    geometries: any[],
-    cb: (err: any, parts: ShpParts) => void
+    geometries: unknown[],
+    cb: (err: unknown, parts: ShpParts) => void
   ): void;
 
   export function zip(
-    rows: Record<string, any>[],
+    rows: Record<string, unknown>[],
     geometryType: GeometryType,
-    geometries: any[],
-    cb: (err: any, result: ArrayBuffer | Uint8Array | Blob) => void
+    geometries: unknown[],
+    cb: (err: unknown, result: ArrayBuffer | Uint8Array | Blob) => void
   ): void;
 
   const _default: { write: typeof write; zip: typeof zip };

@@ -20,8 +20,16 @@ export default function ExportModal({ open, onClose, onExport }: Props) {
         const src = (le.layer as VectorLayer<VectorSource>).getSource?.();
         const count = src ? src.getFeatures().length : 0;
         const kind =
-          (le as any).kind || (le.layer as any).get?.("appKind") || "custom";
-        const base = (le.layer as any).get?.("fileBase") as string | undefined;
+          (
+            le.layer as VectorLayer<VectorSource> & {
+              get?: (key: string) => unknown;
+            }
+          ).get?.("appKind") || "custom";
+        const base = (
+          le.layer as VectorLayer<VectorSource> & {
+            get?: (key: string) => unknown;
+          }
+        ).get?.("fileBase") as string | undefined;
         return {
           id: le.id,
           name: le.name,

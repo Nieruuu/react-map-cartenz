@@ -4,6 +4,8 @@ import type Map from "ol/Map";
 import type VectorSource from "ol/source/Vector";
 import type VectorLayer from "ol/layer/Vector";
 import type { FeatureLike } from "ol/Feature";
+import type Feature from "ol/Feature";
+import type { Geometry } from "ol/geom";
 import Draw from "ol/interaction/Draw";
 import Modify from "ol/interaction/Modify";
 import Select from "ol/interaction/Select";
@@ -69,8 +71,8 @@ type S = {
   setZoomAndScale: (zoom: number, scaleText: string) => void;
   zoom: number;
   scaleText: string;
-  setFocus: (f: any) => void;
-  focus: any | null;
+  setFocus: (f: unknown) => void;
+  focus: unknown | null;
 
   // layer manager
   layers: LayerEntry[];
@@ -183,8 +185,8 @@ export const useMapStore = create<S>((set, get) => ({
         const labelMode = e.styleCfg.labelMode;
         const text =
           labelMode === "kode"
-            ? (feat as any).get?.("id")
-            : (feat as any).get?.("name");
+            ? (feat as { get: (key: string) => unknown }).get?.("id")
+            : (feat as { get: (key: string) => unknown }).get?.("name");
         (st.getText() as Text | undefined)?.setText(
           typeof text === "string" ? text.toUpperCase() : undefined
         );
@@ -237,7 +239,7 @@ export const useMapStore = create<S>((set, get) => ({
       L.layer.setStyle((feat: FeatureLike) => {
         const st = cfgToStyle(cfg).clone();
         const textKey = cfg.labelMode === "kode" ? "id" : "name";
-        const label = (feat as any).get?.(textKey);
+        const label = (feat as { get: (key: string) => unknown }).get?.(textKey);
         (st.getText() as Text | undefined)?.setText(
           typeof label === "string" ? label.toUpperCase() : undefined
         );
@@ -296,10 +298,10 @@ export const useMapStore = create<S>((set, get) => ({
     if (!drawState.select) {
       const select = new Select({
         condition: platformModifierKeyOnly,
-        layers: [L.layer] as any,
+        layers: [L.layer] as VectorLayer<VectorSource>[],
       });
       map.addInteraction(select);
-      set({ drawState: { ...drawState, modify, select } as any });
+      set({ drawState: { ...drawState, modify, select } });
     } else {
       set({ drawState: { ...drawState, modify } });
     }
@@ -323,7 +325,7 @@ export const useMapStore = create<S>((set, get) => ({
 
     let removed = 0;
     if (selectedId) {
-      src.getFeatures().forEach((f: any) => {
+      src.getFeatures().forEach((f: Feature<Geometry>) => {
         if (String(f.get("id")) === String(selectedId)) {
           src.removeFeature(f);
           removed++;
@@ -331,9 +333,9 @@ export const useMapStore = create<S>((set, get) => ({
       });
     } else {
       // fallback: hapus fitur yang terseleksi via Select
-      const sel = (get().drawState.select as any) || null;
+      const sel = get().drawState.select || null;
       if (sel) {
-        sel.getFeatures().forEach((f: any) => {
+        sel.getFeatures().forEach((f: Feature<Geometry>) => {
           src.removeFeature(f);
           removed++;
         });
