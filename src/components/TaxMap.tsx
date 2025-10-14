@@ -1,4 +1,4 @@
-﻿﻿// src/components/TaxMap.tsx
+﻿// src/components/TaxMap.tsx
 import { useEffect, useRef } from "react";
 import OlMap from "ol/Map";
 import View from "ol/View";
@@ -32,7 +32,6 @@ import shp from "shpjs";
 
 import { useMapStore } from "../hooks/useMapStore";
 import { styleFromCfg, useLayersStore } from "../hooks/useLayersStore";
-import ApiTestSuite from "../dev/ApiTestSuite";
 
 const ADMIN_SRC = "/data/5103.zip";
 const INITIAL_CENTER = fromLonLat([115.178, -8.5]);
@@ -1578,15 +1577,6 @@ export default function TaxMap() {
   return (
     <>
       <div ref={mapDiv} className="map" />
-      {import.meta.env.DEV && (
-        <>
-          <div
-            style={{ position: "fixed", top: 100, right: 12, zIndex: 99999 }}
-          >
-            <ApiTestSuite />
-          </div>
-        </>
-      )}
     </>
   );
 }
