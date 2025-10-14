@@ -1,4 +1,4 @@
-﻿// src/components/TaxMap.tsx
+﻿﻿// src/components/TaxMap.tsx
 import { useEffect, useRef } from "react";
 import OlMap from "ol/Map";
 import View from "ol/View";
@@ -15,8 +15,6 @@ import type {
   Feature as GeoJSONFeature,
   FeatureCollection as GeoJSONFeatureCollection,
   Geometry as GeoJSONGeometry,
-  MultiPolygon as GeoJSONMultiPolygon,
-  Polygon as GeoJSONPolygon,
 } from "geojson";
 import "ol/ol.css";
 import {
@@ -60,7 +58,409 @@ function ensureRegistry(): Map<
   return g[REGKEY] as Map<string, any>;
 }
 
-/* ==== utils ==== */
+type Position2D = [number, number];
+type LinearRing2D = Position2D[];
+type PolygonCoords2D = LinearRing2D[];
+type MultiPolygonCoords2D = PolygonCoords2D[];
+
+/* ==== Sampel koordinat dari FC untuk heuristik urutan XY/YX ==== */
+function sampleCoordsFromFC(
+  fc: GeoJSONFeatureCollection,
+  max = 100
+): number[][] {
+  const samples: number[][] = [];
+  if (!fc || !Array.isArray(fc.features)) return samples;
+
+  const pushCoord = (coord: any) => {
+    if (!Array.isArray(coord) || coord.length < 2) return;
+    const x = Number(coord[0]);
+    const y = Number(coord[1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    samples.push([x, y]);
+  };
+
+  const visitCoords = (coords: any) => {
+    if (!Array.isArray(coords) || samples.length >= max) return;
+    if (
+      coords.length >= 2 &&
+      typeof coords[0] === "number" &&
+      typeof coords[1] === "number"
+    ) {
+      pushCoord(coords);
+      return;
+    }
+    for (const part of coords) {
+      if (samples.length >= max) break;
+      visitCoords(part);
+    }
+  };
+
+  const visitGeometry = (geom: GeoJSONGeometry | null | undefined) => {
+    if (!geom) return;
+    if (geom.type === "GeometryCollection") {
+      const geoms = Array.isArray(geom.geometries) ? geom.geometries : [];
+      for (const part of geoms) {
+        if (samples.length >= max) break;
+        visitGeometry(part as GeoJSONGeometry);
+      }
+      return;
+    }
+    visitCoords((geom as any).coordinates);
+  };
+
+  for (const feature of fc.features) {
+    if (samples.length >= max) break;
+    visitGeometry(feature?.geometry as GeoJSONGeometry);
+  }
+  return samples;
+}
+
+/* ==== swap koordinat deep untuk fallback ==== */
+function swapCoordinatesDeep(coords: any): any {
+  if (!Array.isArray(coords)) return coords;
+  if (
+    coords.length >= 2 &&
+    typeof coords[0] === "number" &&
+    typeof coords[1] === "number"
+  ) {
+    const rest = coords.length > 2 ? coords.slice(2) : [];
+    return [coords[1], coords[0], ...rest];
+  }
+  return coords.map((part: any) => swapCoordinatesDeep(part));
+}
+
+function swapGeometryCoordinates(
+  geom: GeoJSONGeometry | null | undefined
+): GeoJSONGeometry | null {
+  if (!geom) return null;
+  if (geom.type === "GeometryCollection") {
+    const geoms = Array.isArray(geom.geometries) ? geom.geometries : [];
+    return {
+      type: "GeometryCollection",
+      geometries: geoms
+        .map((g) => swapGeometryCoordinates(g as GeoJSONGeometry))
+        .filter(Boolean) as GeoJSONGeometry[],
+    };
+  }
+  if ("coordinates" in geom) {
+    return {
+      ...geom,
+      coordinates: swapCoordinatesDeep((geom as any).coordinates),
+    } as GeoJSONGeometry;
+  }
+  return geom;
+}
+
+/* ==== toleransi angka ==== */
+function almostEq(a: number, b: number, eps = 1e-9) {
+  return Math.abs(a - b) <= eps;
+}
+
+/* ==== pembaca koordinat generik: [x,y], typed array, atau {x,y}/{lon,lat} ==== */
+function isTypedNumericArray(value: unknown): value is ArrayLike<number> {
+  return (
+    value != null &&
+    typeof value === "object" &&
+    ArrayBuffer.isView(value as any) &&
+    !(value instanceof DataView)
+  );
+}
+
+function expandNumericPairs(source: ArrayLike<number>): [number, number][] {
+  const coords: [number, number][] = [];
+  const len = source.length ?? 0;
+  for (let i = 0; i + 1 < len; i += 2) {
+    const x = Number(source[i]);
+    const y = Number(source[i + 1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    coords.push([x, y]);
+  }
+  return coords;
+}
+
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string") {
+    const n = Number(value.trim());
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function readCoordinate(candidate: any): [number, number] | null {
+  // typed array of numbers
+  if (isTypedNumericArray(candidate) && candidate.length >= 2) {
+    const x = toFiniteNumber(candidate[0]);
+    const y = toFiniteNumber(candidate[1]);
+    return x == null || y == null ? null : [x, y];
+  }
+  // plain array [x,y]
+  if (Array.isArray(candidate) && candidate.length >= 2) {
+    const x = toFiniteNumber(candidate[0]);
+    const y = toFiniteNumber(candidate[1]);
+    return x == null || y == null ? null : [x, y];
+  }
+  // object {x,y} / {lon,lat}
+  if (candidate && typeof candidate === "object") {
+    const o = candidate as Record<string, unknown>;
+    const x =
+      toFiniteNumber(o.x) ??
+      toFiniteNumber((o as any).X) ??
+      toFiniteNumber((o as any).lon) ??
+      toFiniteNumber((o as any).longitude);
+    const y =
+      toFiniteNumber(o.y) ??
+      toFiniteNumber((o as any).Y) ??
+      toFiniteNumber((o as any).lat) ??
+      toFiniteNumber((o as any).latitude);
+    if (x != null && y != null) return [x, y];
+  }
+  return null;
+}
+
+/* ==== normalisasi ring/rings==== */
+function normalizeRing(raw: any): LinearRing2D | null {
+  // raw bisa array koordinat, atau typed array of pairs
+  const source: any[] = Array.isArray(raw)
+    ? raw
+    : isTypedNumericArray(raw)
+    ? expandNumericPairs(raw)
+    : [];
+
+  if (!source.length) return null;
+
+  const ring: LinearRing2D = [];
+  let prev: Position2D | null = null;
+
+  for (const candidate of source) {
+    const coord = readCoordinate(candidate);
+    if (!coord) continue;
+    if (prev && almostEq(prev[0], coord[0]) && almostEq(prev[1], coord[1])) {
+      continue;
+    }
+    ring.push([coord[0], coord[1]]);
+    prev = coord;
+  }
+
+  if (ring.length < 3) return null;
+
+  // minimal 3 titik unik
+  const unique = new Set(ring.map((pt) => `${pt[0]}|${pt[1]}`));
+  if (unique.size < 3) return null;
+
+  const first = ring[0];
+  const last = ring[ring.length - 1];
+  if (!(almostEq(first[0], last[0]) && almostEq(first[1], last[1]))) {
+    ring.push([first[0], first[1]]);
+  } else {
+    // keep last as-is
+    ring[ring.length - 1] = [last[0], last[1]];
+  }
+
+  if (ring.length < 4) return null;
+  return ring;
+}
+
+function normalizePolygonCoords(raw: any): PolygonCoords2D | null {
+  const sources: any[] = Array.isArray(raw)
+    ? raw
+    : isTypedNumericArray(raw)
+    ? [raw] // flat typed array of XYXY...
+    : [];
+  if (!sources.length) return null;
+
+  const rings: PolygonCoords2D = [];
+  for (const candidate of sources) {
+    // jika typed array datar, expand dulu jadi pasangan [x,y]
+    const ringInput = isTypedNumericArray(candidate)
+      ? expandNumericPairs(candidate)
+      : candidate;
+    const ring = normalizeRing(ringInput);
+    if (ring) rings.push(ring);
+  }
+  return rings.length ? rings : null;
+}
+
+/* ==== normalizeGeometry: paham Polygon/MultiPolygon/GeometryCollection, rings, PolygonZ ==== */
+function normalizeGeometry(
+  geom: GeoJSONGeometry | null | undefined
+):
+  | { type: "Polygon"; coordinates: PolygonCoords2D }
+  | { type: "MultiPolygon"; coordinates: MultiPolygonCoords2D }
+  | null {
+  if (!geom) return null;
+
+  const rawType = typeof geom.type === "string" ? geom.type : "";
+  const lc = rawType.toLowerCase();
+
+  const isPolygon = lc.startsWith("polygon"); // polygon, polygonz, polygonm...
+  const isMultiPolygon = lc.startsWith("multipolygon");
+  const isGeomColl = lc.startsWith("geometrycollection");
+
+  if (isGeomColl) {
+    const geoms = Array.isArray((geom as any).geometries)
+      ? (geom as any).geometries
+      : [];
+    const collected: PolygonCoords2D[] = [];
+    for (const part of geoms) {
+      const n = normalizeGeometry(part as GeoJSONGeometry);
+      if (!n) continue;
+      if (n.type === "Polygon") collected.push(n.coordinates);
+      else collected.push(...n.coordinates);
+    }
+    if (!collected.length) return null;
+    if (collected.length === 1) {
+      return { type: "Polygon", coordinates: collected[0] };
+    }
+    return { type: "MultiPolygon", coordinates: collected };
+  }
+
+  if (isPolygon) {
+    // coordinates biasa, atau ESRI rings, atau typed array datar
+    const coordsSource =
+      Array.isArray((geom as any).coordinates) &&
+      (geom as any).coordinates.length
+        ? (geom as any).coordinates
+        : Array.isArray((geom as any).rings)
+        ? (geom as any).rings
+        : isTypedNumericArray((geom as any).coordinates)
+        ? [(geom as any).coordinates]
+        : [];
+    const rings = normalizePolygonCoords(coordsSource);
+    return rings ? { type: "Polygon", coordinates: rings } : null;
+  }
+
+  if (isMultiPolygon) {
+    const polysSrc = Array.isArray((geom as any).coordinates)
+      ? (geom as any).coordinates
+      : [];
+    const polys: PolygonCoords2D[] = [];
+    for (const poly of polysSrc) {
+      const rings = normalizePolygonCoords(poly);
+      if (rings && rings.length) polys.push(rings);
+    }
+    return polys.length ? { type: "MultiPolygon", coordinates: polys } : null;
+  }
+
+  return null;
+}
+
+/* ==== builder manual OL Feature dari GeoJSON normalisasi ==== */
+function manualBuildFeatures(
+  baseFC: GeoJSONFeatureCollection,
+  order: "xy" | "yx",
+  asDegrees: boolean
+): Feature<Geometry>[] {
+  const features: Feature<Geometry>[] = [];
+  const swap = order === "yx";
+
+  const projectPoint = (coord: Position2D): Position2D | null => {
+    const raw: Position2D = swap ? [coord[1], coord[0]] : [coord[0], coord[1]];
+    if (asDegrees) {
+      const projected = fromLonLat(raw);
+      if (!Number.isFinite(projected[0]) || !Number.isFinite(projected[1])) {
+        return null;
+      }
+      return [projected[0], projected[1]];
+    }
+    return raw;
+  };
+
+  const projectRing = (ring: LinearRing2D): LinearRing2D | null => {
+    const projected: LinearRing2D = [];
+    let prev: Position2D | null = null;
+    for (const coord of ring) {
+      const pj = projectPoint(coord);
+      if (!pj) continue;
+      if (prev && almostEq(prev[0], pj[0]) && almostEq(prev[1], pj[1]))
+        continue;
+      projected.push(pj);
+      prev = pj;
+    }
+    if (projected.length < 3) return null;
+    const first = projected[0];
+    const last = projected[projected.length - 1];
+    if (!(almostEq(first[0], last[0]) && almostEq(first[1], last[1]))) {
+      projected.push([first[0], first[1]]);
+    }
+    if (projected.length < 4) return null;
+
+    return projected;
+  };
+
+  for (const feature of baseFC.features || []) {
+    const normalized = normalizeGeometry(feature?.geometry as GeoJSONGeometry);
+    if (!normalized) continue;
+    const props =
+      feature && typeof feature === "object"
+        ? { ...(feature.properties || {}) }
+        : {};
+
+    if (normalized.type === "Polygon") {
+      const rings = normalized.coordinates
+        .map((ring) => projectRing(ring))
+        .filter((ring): ring is LinearRing2D => Boolean(ring));
+      if (!rings.length) continue;
+      const geom = new Polygon(rings);
+      const ft = new Feature(geom);
+      ft.setProperties(props);
+      if (
+        feature &&
+        typeof feature === "object" &&
+        "id" in feature &&
+        (feature as any).id != null
+      ) {
+        ft.setId((feature as any).id);
+      }
+      features.push(ft);
+    } else {
+      const polys: PolygonCoords2D[] = [];
+      for (const poly of normalized.coordinates) {
+        const projected = poly
+          .map((ring) => projectRing(ring))
+          .filter((ring): ring is LinearRing2D => Boolean(ring));
+        if (projected.length) polys.push(projected);
+      }
+      if (!polys.length) continue;
+      const geom = new MultiPolygon(polys);
+      const ft = new Feature(geom);
+      ft.setProperties(props);
+      if (
+        feature &&
+        typeof feature === "object" &&
+        "id" in feature &&
+        (feature as any).id != null
+      ) {
+        ft.setId((feature as any).id);
+      }
+      features.push(ft);
+    }
+  }
+
+  return features;
+}
+
+/* ==== filter valid extent longgar ==== */
+function requireValid(features: Feature<Geometry>[]): Feature<Geometry>[] {
+  const eps = 1e-6; // toleransi
+  return features.filter((ft) => {
+    const geom = ft.getGeometry?.();
+    if (!geom) return false;
+    const [minX, minY, maxX, maxY] = geom.getExtent();
+    if (
+      !Number.isFinite(minX) ||
+      !Number.isFinite(minY) ||
+      !Number.isFinite(maxX) ||
+      !Number.isFinite(maxY)
+    )
+      return false;
+    const w = Math.abs(maxX - minX);
+    const h = Math.abs(maxY - minY);
+    return w > eps && h > eps;
+  });
+}
+
+/* ==== utils tampilan ==== */
 function hexToRgba(hex: string, alpha = 1) {
   const h = hex.replace("#", "");
   const n = parseInt(h, 16);
@@ -77,325 +477,11 @@ function pickFeatureCollection(data: any) {
       const v = (data as any)[k];
       if (v && v.type === "FeatureCollection") return v;
     }
-
-    type Position2D = [number, number];
-    type LinearRing2D = Position2D[];
-    type PolygonCoords2D = LinearRing2D[];
-    type MultiPolygonCoords2D = PolygonCoords2D[];
-
-    function looksLikeLonLatSample(coords: number[][], take = 25): boolean {
-      if (!coords.length) return false;
-      let tested = 0;
-      let within = 0;
-      for (const pair of coords) {
-        if (!Array.isArray(pair) || pair.length < 2) continue;
-        const x = Number(pair[0]);
-        const y = Number(pair[1]);
-        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-        tested++;
-        if (Math.abs(x) <= 180 && Math.abs(y) <= 90) within++;
-        if (tested >= take) break;
-      }
-      if (!tested) return false;
-      return within / tested >= 0.6;
-    }
-
-    function sampleCoordsFromFC(
-      fc: GeoJSONFeatureCollection,
-      max = 100
-    ): number[][] {
-      const samples: number[][] = [];
-      if (!fc || !Array.isArray(fc.features)) return samples;
-
-      const pushCoord = (coord: any) => {
-        if (!Array.isArray(coord) || coord.length < 2) return;
-        const x = Number(coord[0]);
-        const y = Number(coord[1]);
-        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-        samples.push([x, y]);
-      };
-
-      const visitCoords = (coords: any) => {
-        if (!Array.isArray(coords) || samples.length >= max) return;
-        if (
-          coords.length >= 2 &&
-          typeof coords[0] === "number" &&
-          typeof coords[1] === "number"
-        ) {
-          pushCoord(coords);
-          return;
-        }
-        for (const part of coords) {
-          if (samples.length >= max) break;
-          visitCoords(part);
-        }
-      };
-
-      const visitGeometry = (geom: GeoJSONGeometry | null | undefined) => {
-        if (!geom) return;
-        if (geom.type === "GeometryCollection") {
-          const geoms = Array.isArray(geom.geometries) ? geom.geometries : [];
-          for (const part of geoms) {
-            if (samples.length >= max) break;
-            visitGeometry(part as GeoJSONGeometry);
-          }
-          return;
-        }
-        visitCoords((geom as any).coordinates);
-      };
-
-      for (const feature of fc.features) {
-        if (samples.length >= max) break;
-        visitGeometry(feature?.geometry as GeoJSONGeometry);
-      }
-      return samples;
-    }
-
-    function swapCoordinatesDeep(coords: any): any {
-      if (!Array.isArray(coords)) return coords;
-      if (
-        coords.length >= 2 &&
-        typeof coords[0] === "number" &&
-        typeof coords[1] === "number"
-      ) {
-        const rest = coords.length > 2 ? coords.slice(2) : [];
-        return [coords[1], coords[0], ...rest];
-      }
-      return coords.map((part: any) => swapCoordinatesDeep(part));
-    }
-
-    function swapGeometryCoordinates(
-      geom: GeoJSONGeometry | null | undefined
-    ): GeoJSONGeometry | null {
-      if (!geom) return null;
-      if (geom.type === "GeometryCollection") {
-        const geoms = Array.isArray(geom.geometries) ? geom.geometries : [];
-        return {
-          type: "GeometryCollection",
-          geometries: geoms
-            .map((g) => swapGeometryCoordinates(g as GeoJSONGeometry))
-            .filter(Boolean) as GeoJSONGeometry[],
-        };
-      }
-      if ("coordinates" in geom) {
-        return {
-          ...geom,
-          coordinates: swapCoordinatesDeep((geom as any).coordinates),
-        } as GeoJSONGeometry;
-      }
-      return geom;
-    }
-
-    function normalizeRing(raw: any): LinearRing2D | null {
-      if (!Array.isArray(raw)) return null;
-      const ring: LinearRing2D = [];
-      let prev: Position2D | null = null;
-      for (const candidate of raw) {
-        if (!Array.isArray(candidate) || candidate.length < 2) continue;
-        const x = Number(candidate[0]);
-        const y = Number(candidate[1]);
-        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-        const current: Position2D = [x, y];
-        if (prev && prev[0] === current[0] && prev[1] === current[1]) continue;
-        ring.push(current);
-        prev = current;
-      }
-      if (ring.length < 3) return null;
-      const unique = new Set(ring.map((pt) => `${pt[0]}|${pt[1]}`));
-      if (unique.size < 3) return null;
-      const first = ring[0];
-      const last = ring[ring.length - 1];
-      if (first[0] !== last[0] || first[1] !== last[1]) {
-        ring.push([first[0], first[1]]);
-      } else {
-        ring[ring.length - 1] = [last[0], last[1]];
-      }
-      if (ring.length < 4) return null;
-      return ring;
-    }
-
-    function normalizePolygonCoords(raw: any): PolygonCoords2D | null {
-      if (!Array.isArray(raw)) return null;
-      const rings: PolygonCoords2D = [];
-      for (const candidate of raw) {
-        const ring = normalizeRing(candidate);
-        if (ring) rings.push(ring);
-      }
-      return rings.length ? rings : null;
-    }
-
-    function normalizeMultiPolygonCoords(
-      raw: any
-    ): MultiPolygonCoords2D | null {
-      if (!Array.isArray(raw)) return null;
-      const polygons: MultiPolygonCoords2D = [];
-      for (const candidate of raw) {
-        const poly = normalizePolygonCoords(candidate);
-        if (poly) polygons.push(poly);
-      }
-      return polygons.length ? polygons : null;
-    }
-
-    function normalizeGeometry(
-      geom: GeoJSONGeometry | null | undefined
-    ):
-      | { type: "Polygon"; coordinates: PolygonCoords2D }
-      | { type: "MultiPolygon"; coordinates: MultiPolygonCoords2D }
-      | null {
-      if (!geom) return null;
-      if (geom.type === "Polygon") {
-        const coords = normalizePolygonCoords(
-          (geom as GeoJSONPolygon).coordinates
-        );
-        return coords ? { type: "Polygon", coordinates: coords } : null;
-      }
-      if (geom.type === "MultiPolygon") {
-        const coords = normalizeMultiPolygonCoords(
-          (geom as GeoJSONMultiPolygon).coordinates
-        );
-        return coords ? { type: "MultiPolygon", coordinates: coords } : null;
-      }
-      if (geom.type === "GeometryCollection") {
-        const geoms = Array.isArray(geom.geometries) ? geom.geometries : [];
-        const collected: PolygonCoords2D[] = [];
-        for (const part of geoms) {
-          const normalized = normalizeGeometry(part as GeoJSONGeometry);
-          if (!normalized) continue;
-          if (normalized.type === "Polygon") {
-            collected.push(normalized.coordinates);
-          } else {
-            collected.push(...normalized.coordinates);
-          }
-        }
-        if (!collected.length) return null;
-        if (collected.length === 1) {
-          return { type: "Polygon", coordinates: collected[0] };
-        }
-        return { type: "MultiPolygon", coordinates: collected };
-      }
-      return null;
-    }
-
-    function manualBuildFeatures(
-      baseFC: GeoJSONFeatureCollection,
-      order: "xy" | "yx",
-      asDegrees: boolean
-    ): Feature<Geometry>[] {
-      const features: Feature<Geometry>[] = [];
-      const swap = order === "yx";
-
-      const projectPoint = (coord: Position2D): Position2D | null => {
-        const raw: Position2D = swap
-          ? [coord[1], coord[0]]
-          : [coord[0], coord[1]];
-        if (asDegrees) {
-          const projected = fromLonLat(raw);
-          if (
-            !Number.isFinite(projected[0]) ||
-            !Number.isFinite(projected[1])
-          ) {
-            return null;
-          }
-          return [projected[0], projected[1]];
-        }
-        return raw;
-      };
-
-      const projectRing = (ring: LinearRing2D): LinearRing2D | null => {
-        const projected: LinearRing2D = [];
-        let prev: Position2D | null = null;
-        for (const coord of ring) {
-          const pj = projectPoint(coord);
-          if (!pj) continue;
-          if (prev && prev[0] === pj[0] && prev[1] === pj[1]) continue;
-          projected.push(pj);
-          prev = pj;
-        }
-        if (projected.length < 3) return null;
-        const first = projected[0];
-        const last = projected[projected.length - 1];
-        if (first[0] !== last[0] || first[1] !== last[1]) {
-          projected.push([first[0], first[1]]);
-        }
-        if (projected.length < 4) return null;
-        return projected;
-      };
-
-      for (const feature of baseFC.features || []) {
-        const normalized = normalizeGeometry(
-          feature?.geometry as GeoJSONGeometry
-        );
-        if (!normalized) continue;
-        const props =
-          feature && typeof feature === "object"
-            ? { ...(feature.properties || {}) }
-            : {};
-
-        if (normalized.type === "Polygon") {
-          const rings = normalized.coordinates
-            .map((ring) => projectRing(ring))
-            .filter((ring): ring is LinearRing2D => Boolean(ring));
-          if (!rings.length) continue;
-          const geom = new Polygon(rings);
-          const ft = new Feature(geom);
-          ft.setProperties(props);
-          if (
-            feature &&
-            typeof feature === "object" &&
-            "id" in feature &&
-            feature.id != null
-          ) {
-            ft.setId(feature.id);
-          }
-          features.push(ft);
-        } else {
-          const polys: PolygonCoords2D[] = [];
-          for (const poly of normalized.coordinates) {
-            const projected = poly
-              .map((ring) => projectRing(ring))
-              .filter((ring): ring is LinearRing2D => Boolean(ring));
-            if (projected.length) polys.push(projected);
-          }
-          if (!polys.length) continue;
-          const geom = new MultiPolygon(polys);
-          const ft = new Feature(geom);
-          ft.setProperties(props);
-          if (
-            feature &&
-            typeof feature === "object" &&
-            "id" in feature &&
-            feature.id != null
-          ) {
-            ft.setId(feature.id);
-          }
-          features.push(ft);
-        }
-      }
-
-      return features;
-    }
-
-    function requireValid(features: Feature<Geometry>[]): Feature<Geometry>[] {
-      return features.filter((ft) => {
-        const geom = ft.getGeometry?.();
-        if (!geom) return false;
-        const extent = geom.getExtent();
-        return (
-          Number.isFinite(extent[0]) &&
-          Number.isFinite(extent[1]) &&
-          Number.isFinite(extent[2]) &&
-          Number.isFinite(extent[3]) &&
-          extent[2] !== extent[0] &&
-          extent[3] !== extent[1]
-        );
-      });
-    }
   }
   return null;
 }
 
-function normalizeFeatureProps(f: any, idx: number) {
-  const p = f.getProperties ? f.getProperties() : {};
+function assignFeatureMetadata(features: Feature<Geometry>[]) {
   const idKeys = [
     "D_KD_DT2",
     "KD_KEL",
@@ -417,12 +503,6 @@ function normalizeFeatureProps(f: any, idx: number) {
     "NO",
     "FID",
   ];
-  let idVal: any = idKeys
-    .map((k) => p?.[k])
-    .find((v) => v !== undefined && v !== null && String(v) !== "");
-  if (idVal === undefined) idVal = `feat_${idx}`;
-  f.set("id", String(idVal));
-
   const nameKeys = [
     "D_NM_DT2",
     "NAMA_KEL",
@@ -447,17 +527,38 @@ function normalizeFeatureProps(f: any, idx: number) {
     "name",
     "NAME",
   ];
-  const hasLetters = (v: any) =>
-    typeof v === "string" && v.trim() !== "" && /[A-Za-z]/.test(v);
-  let nameVal: any = nameKeys.map((k) => p?.[k]).find(hasLetters);
-  if (!nameVal) {
-    const dynKey = Object.keys(p || {}).find((k) =>
-      /kec|kel|desa|kab|nama|name/i.test(k)
-    );
-    const dynVal = dynKey ? p[dynKey] : undefined;
-    if (hasLetters(dynVal)) nameVal = dynVal;
-  }
-  if (nameVal) f.set("name", String(nameVal).trim());
+  const hasLetters = (value: unknown): boolean =>
+    typeof value === "string" && value.trim() !== "" && /[A-Za-z]/.test(value);
+
+  features.forEach((feature, index) => {
+    const props = feature.getProperties ? feature.getProperties() : {};
+
+    let idValue =
+      idKeys
+        .map((key) => (props as any)?.[key])
+        .find(
+          (value) =>
+            value !== undefined && value !== null && String(value) !== ""
+        ) ?? `feat_${index}`;
+    feature.set("id", String(idValue));
+
+    let nameValue = nameKeys
+      .map((key) => (props as any)?.[key])
+      .find(hasLetters);
+    if (!nameValue) {
+      const dynamicKey = Object.keys(props || {}).find((key) =>
+        /kec|kel|desa|kab|nama|name/i.test(key)
+      );
+      const dynamicValue = dynamicKey ? (props as any)[dynamicKey] : undefined;
+      if (hasLetters(dynamicValue)) {
+        nameValue = dynamicValue;
+      }
+    }
+
+    if (nameValue) {
+      feature.set("name", String(nameValue).trim());
+    }
+  });
 }
 function makeBaseSource(kind: string) {
   switch (kind) {
@@ -531,14 +632,14 @@ function featureName(f: any): string | undefined {
     "NM_KAB",
   ];
   for (const k of keys) {
-    const v = props?.[k];
+    const v = (props as any)?.[k];
     if (typeof v === "string" && v.trim() !== "" && /[A-Za-z]/.test(v))
       return v.trim();
   }
   const dynKey = Object.keys(props || {}).find((k) =>
     /kec|kel|desa|kab|nama|name/i.test(k)
   );
-  const dynVal = dynKey ? props[dynKey] : undefined;
+  const dynVal = dynKey ? (props as any)[dynKey] : undefined;
   if (
     typeof dynVal === "string" &&
     dynVal.trim() !== "" &&
@@ -707,7 +808,7 @@ export default function TaxMap() {
           dataProjection: "EPSG:4326",
           featureProjection: "EPSG:3857",
         }) as any[];
-        feats.forEach((ft, i) => normalizeFeatureProps(ft, i));
+        assignFeatureMetadata(feats);
 
         // VALIDASI & FIT AMAN
         const cloned = feats.map((f) => f.clone());
@@ -803,8 +904,28 @@ export default function TaxMap() {
       }
     })();
 
-    /* LISTENER: Load dataset hasil import */
+    function guessGeographicOrder(coords: number[][], take = 25) {
+      let tested = 0,
+        okXY = 0,
+        okYX = 0;
+      for (const c of coords) {
+        if (!Array.isArray(c) || c.length < 2) continue;
+        const x = Number(c[0]),
+          y = Number(c[1]);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+        tested++;
+        if (Math.abs(x) <= 180 && Math.abs(y) <= 90) okXY++;
+        if (Math.abs(y) <= 180 && Math.abs(x) <= 90) okYX++;
+        if (tested >= take) break;
+      }
+      const ratioXY = tested ? okXY / tested : 0;
+      const ratioYX = tested ? okYX / tested : 0;
+      const asDegrees = Math.max(ratioXY, ratioYX) >= 0.6;
+      const prefer: "xy" | "yx" = ratioYX > ratioXY ? "yx" : "xy";
+      return { asDegrees, prefer };
+    }
 
+    /* LISTENER: Load dataset hasil import */
     const onLoadImportedDataset = (ev: Event) => {
       const detail = (ev as CustomEvent<any>).detail || {};
       const registry = ensureRegistry();
@@ -834,51 +955,89 @@ export default function TaxMap() {
         datasetName) as string;
 
       const fmt = geojsonFmtRef.current!;
-      const readFeatures = (source: GeoJSONFeatureCollection) => {
+
+      // 1) Ambil sampel dan tebak sifat data (derajat atau meter) + urutan (xy atau yx)
+      const samples = sampleCoordsFromFC(fcSource);
+      const g = guessGeographicOrder(samples); // { asDegrees: boolean, prefer: "xy" | "yx" }
+
+      // 2) Jika prefer "yx", siapkan FC yang di-swap; kalau "xy" biarkan apa adanya
+      const fcPrefer: GeoJSONFeatureCollection =
+        g.prefer === "yx"
+          ? {
+              ...fcSource,
+              features: (fcSource.features || []).map(
+                (feat: GeoJSONFeature) => {
+                  if (!feat?.geometry) return feat;
+                  const swapped = swapGeometryCoordinates(
+                    feat.geometry as GeoJSONGeometry
+                  );
+                  return { ...feat, geometry: swapped ?? feat.geometry };
+                }
+              ),
+            }
+          : fcSource;
+
+      // Helper: baca fitur sesuai dugaan derajat/meter
+      const adaptiveRead = (
+        source: GeoJSONFeatureCollection,
+        asDegrees: boolean
+      ) => {
         try {
+          if (asDegrees) {
+            // data kelihatan derajat → transform 4326 → 3857
+            return fmt.readFeatures(source, {
+              dataProjection: "EPSG:4326",
+              featureProjection: "EPSG:3857",
+            }) as Feature<Geometry>[];
+          }
+          // data bukan derajat (meter UTM/TM-3/apa pun) → JANGAN transform dulu
           return fmt.readFeatures(source, {
-            dataProjection: "EPSG:4326",
+            dataProjection: "EPSG:3857",
             featureProjection: "EPSG:3857",
           }) as Feature<Geometry>[];
-        } catch (error) {
-          console.error("readFeatures gagal:", error);
+        } catch (e) {
+          console.error("adaptiveRead gagal:", e);
           return [];
         }
       };
 
-      let features = requireValid(readFeatures(fcSource));
+      // 3) Coba baca dengan kombinasi paling masuk akal
+      let features = requireValid(adaptiveRead(fcPrefer, g.asDegrees));
 
+      // 4) Kalau kosong, coba kombinasi kebalikan (swap balik + asumsi proyeksi dibalik)
+      if (!features.length) {
+        const fcAlt =
+          fcPrefer === fcSource
+            ? {
+                ...fcSource,
+                features: (fcSource.features || []).map(
+                  (feat: GeoJSONFeature) => {
+                    if (!feat?.geometry) return feat;
+                    const swapped = swapGeometryCoordinates(
+                      feat.geometry as GeoJSONGeometry
+                    );
+                    return { ...feat, geometry: swapped ?? feat.geometry };
+                  }
+                ),
+              }
+            : fcSource;
+
+        features = requireValid(adaptiveRead(fcAlt, !g.asDegrees));
+      }
+
+      // 5) Terakhir: manual builder (swap XY/YX + fromLonLat kalau derajat)
       if (!features.length) {
         console.warn(
-          "No valid features found after normalization, trying raw OL read + manual builder"
+          "No valid features found after adaptive read, trying manual builder"
         );
-
-        const swappedFC: GeoJSONFeatureCollection = {
-          ...fcSource,
-          features: (fcSource.features || []).map((feat: GeoJSONFeature) => {
-            if (!feat?.geometry) return feat;
-            const swappedGeom = swapGeometryCoordinates(
-              feat.geometry as GeoJSONGeometry
-            );
-            return {
-              ...feat,
-              geometry: swappedGeom ?? feat.geometry,
-            };
-          }),
-        };
-
-        features = requireValid(readFeatures(swappedFC));
-
-        if (!features.length) {
-          const samples = sampleCoordsFromFC(fcSource);
-          const asDegrees = looksLikeLonLatSample(samples);
-          for (const order of ["xy", "yx"] as const) {
-            const manual = manualBuildFeatures(fcSource, order, asDegrees);
-            const validManual = requireValid(manual);
-            if (validManual.length) {
-              features = validManual;
-              break;
-            }
+        const orders =
+          g.prefer === "yx" ? (["yx", "xy"] as const) : (["xy", "yx"] as const);
+        for (const order of orders) {
+          const manual = manualBuildFeatures(fcSource, order, g.asDegrees);
+          const validManual = requireValid(manual);
+          if (validManual.length) {
+            features = validManual;
+            break;
           }
         }
       }
@@ -890,7 +1049,7 @@ export default function TaxMap() {
         return;
       }
 
-      features.forEach((ft, idx) => normalizeFeatureProps(ft, idx));
+      assignFeatureMetadata(features);
 
       const src = new VectorSource({ features });
 
@@ -967,7 +1126,7 @@ export default function TaxMap() {
     );
 
     // Hover
-    map.on("pointermove", (e) => {
+    const onMove = (e: any) => {
       const hs = hoverStateRef.current;
       if (isBusyRef.current || hs.moving) {
         setHoveredId(undefined);
@@ -995,7 +1154,8 @@ export default function TaxMap() {
         }
         setHoveredId(hid);
       });
-    });
+    };
+    map.on("pointermove", onMove);
 
     // Click select
     map.on("singleclick", (evt) => {
@@ -1233,7 +1393,7 @@ export default function TaxMap() {
           .find((f: any) => String(f.get("id") || "") === String(id));
         if (!ft) continue;
         const raw = ft.getProperties?.() || {};
-        const { geometry, geom, the_geom, _geom, ...rest } = raw;
+        const { geometry, geom, the_geom, _geom, ...rest } = raw as any;
         props = rest;
         break;
       }
@@ -1271,7 +1431,7 @@ export default function TaxMap() {
 
         Object.keys(updates).forEach((k) => {
           if (/^(geometry|geom|the_geom|_geom)$/i.test(k)) return;
-          ft.set(k, updates[k]);
+          (ft as any).set(k, (updates as any)[k]);
         });
         (deletes as string[]).forEach((k) => {
           if (/^(geometry|geom|the_geom|_geom)$/i.test(k)) return;
@@ -1283,14 +1443,17 @@ export default function TaxMap() {
         // bila user mengubah kode/nama via alias resmi, ikutkan ke id/name
         const pickFirst = (keys: string[]) => {
           for (const k of keys)
-            if (k in updates && String(updates[k]).trim() !== "")
-              return String(updates[k]).trim();
+            if (
+              k in (updates as any) &&
+              String((updates as any)[k]).trim() !== ""
+            )
+              return String((updates as any)[k]).trim();
           return undefined;
         };
         const newIdMaybe = pickFirst(CODE_KEYS);
         const newNameMaybe = pickFirst(NAME_KEYS);
-        if (newIdMaybe) ft.set("id", newIdMaybe);
-        if (newNameMaybe) ft.set("name", newNameMaybe);
+        if (newIdMaybe) (ft as any).set("id", newIdMaybe);
+        if (newNameMaybe) (ft as any).set("name", newNameMaybe);
 
         (le.layer as any).changed?.();
 

@@ -1,5 +1,5 @@
 ﻿// src/components/LeftDock.tsx
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState } from "react";
 import VectorLayer from "ol/layer/Vector";
 import VectorSource from "ol/source/Vector";
 import Draw from "ol/interaction/Draw";
@@ -10,6 +10,7 @@ import Collection from "ol/Collection";
 import GeoJSON from "ol/format/GeoJSON";
 import shp from "shpjs";
 import JSZip from "jszip";
+import { write as writeShapefile } from "@crmackey/shp-write";
 import { Fill, Stroke, Style, Circle as CircleStyle } from "ol/style";
 import type { Geometry } from "ol/geom";
 import Point from "ol/geom/Point";
@@ -24,303 +25,34 @@ import { useMapStore } from "../hooks/useMapStore";
 import { useLayersStore, styleFromCfg } from "../hooks/useLayersStore";
 import LayerLoadModal from "./LayerLoadModal";
 import ExportModal from "./ExportModal";
-
-/* =======================  Loader shp-write (modern & classic)  ======================= */
-declare global {
-  interface Window {
-    shpwriter?: { zip: (fc: any, opts?: any) => Promise<any> | any };
-    shpwrite?: { zip: (fc: any, opts?: any) => Promise<any> | any };
-    __shpwriterLoading__?: Promise<any>;
-    __shpwriteClassicLoading__?: Promise<any>;
-
-    // Mapshaper & Zip.js
-    mapshaper?: {
-      applyCommands: (
-        commands: string,
-        inputs?: Record<string, string | ArrayBuffer | Uint8Array>
-      ) => Promise<Record<string, string | ArrayBuffer | Uint8Array>>;
-    };
-    zip?: any;
-    __mapshaperLoading__?: Promise<any>;
-    __zipjsLoading__?: Promise<any>;
-  }
-}
-
-/** UMD @crmackey/shp-write via jsDelivr -> unpkg (fallback) */
-async function ensureShpWriterReady(): Promise<any> {
-  if (window.shpwriter && typeof window.shpwriter.zip === "function") {
-    return window.shpwriter;
-  }
-  if (window.__shpwriterLoading__) {
-    return window.__shpwriterLoading__;
-  }
-
-  const tryLoadFromCdn = () =>
-    new Promise<any>((resolve, reject) => {
-      const urls = [
-        "https://cdn.jsdelivr.net/npm/@crmackey/shp-write@0.4.5/lib/shpwriter.umd.js",
-        "https://unpkg.com/@crmackey/shp-write@0.4.5/lib/shpwriter.umd.js",
-      ];
-      let i = 0;
-      const next = () => {
-        if (i >= urls.length) {
-          reject(new Error("Gagal memuat shpwriter dari CDN"));
-          return;
-        }
-        const url = urls[i++];
-        console.log(`Trying to load shpwriter from: ${url}`);
-        const script = document.createElement("script");
-        script.async = true;
-        script.crossOrigin = "anonymous";
-        script.src = url;
-        const timeoutId = window.setTimeout(() => {
-          script.onload = null;
-          script.onerror = null;
-          script.remove();
-          next();
-        }, 15000);
-        script.onload = () => {
-          window.clearTimeout(timeoutId);
-          setTimeout(() => {
-            const shpLib = window.shpwriter || window.shpwrite;
-            if (shpLib && typeof shpLib.zip === "function") {
-              window.shpwriter = shpLib;
-              window.shpwrite = shpLib;
-              resolve(shpLib);
-            } else {
-              console.warn(
-                "shpwriter script loaded but zip() not found, trying next source"
-              );
-              next();
-            }
-          }, 300);
-        };
-        script.onerror = () => {
-          window.clearTimeout(timeoutId);
-          script.remove();
-          next();
-        };
-        document.head.appendChild(script);
-      };
-      next();
-    });
-
-  const tryLoadFromModule = async () => {
-    try {
-      const mod = await import("shp-write");
-      const writer = (mod as any)?.default ?? (mod as any);
-      if (writer && typeof writer.zip === "function") {
-        window.shpwriter = writer;
-        return writer;
-      }
-      throw new Error("Modul shp-write tidak menyediakan fungsi zip()");
-    } catch (error) {
-      console.error("Gagal memuat modul shp-write lokal:", error);
-      throw error;
-    }
-  };
-
-  window.__shpwriterLoading__ = (async () => {
-    try {
-      console.log("=== LOADING @crmackey/shp-write (CDN) ===");
-      return await tryLoadFromCdn();
-    } catch (cdnError) {
-      console.warn("shpwrite CDN gagal:", cdnError);
-      console.log("=== LOADING shp-write dari modul lokal ===");
-      return await tryLoadFromModule();
-    }
-  })();
-
-  return window.__shpwriterLoading__;
-}
-
-/** UMD shp-write klasik via jsDelivr -> unpkg (fallback) */
-async function ensureShpWriteClassicReady(): Promise<any> {
-  if (window.shpwrite && typeof window.shpwrite.zip === "function")
-    return window.shpwrite;
-  if (!window.__shpwriteClassicLoading__) {
-    window.__shpwriteClassicLoading__ = new Promise((resolve, reject) => {
-      const urls = [
-        "https://cdn.jsdelivr.net/npm/shp-write@0.3.4/shpwrite.js",
-        "https://unpkg.com/shp-write@0.3.4/shpwrite.js",
-      ];
-      let i = 0;
-      const next = () => {
-        if (i >= urls.length)
-          return reject(new Error("Gagal memuat shp-write klasik"));
-        const s = document.createElement("script");
-        s.async = true;
-        s.crossOrigin = "anonymous";
-        s.src = urls[i++];
-        const to = window.setTimeout(() => {
-          s.onload = null;
-          s.onerror = null;
-          s.remove();
-          next();
-        }, 15000); // Increased timeout
-        s.onload = () => {
-          window.clearTimeout(to);
-          // Add delay to ensure library is fully initialized
-          setTimeout(() => {
-            if (window.shpwrite && typeof window.shpwrite.zip === "function") {
-              console.log("Classic shpwrite loaded successfully");
-              resolve(window.shpwrite);
-            } else {
-              console.warn(
-                "Classic shpwrite loaded but zip function not available"
-              );
-              next();
-            }
-          }, 500); // Added delay
-        };
-        s.onerror = () => {
-          window.clearTimeout(to);
-          s.remove();
-          next();
-        };
-        document.head.appendChild(s);
-      };
-      next();
-    });
-  }
-  return window.__shpwriteClassicLoading__;
-}
-
-/* =======================  Loader Mapshaper & Zip.js  ======================= */
-/** Muat Mapshaper build browser (global `mapshaper`) via CDN dengan fallback */
-async function ensureMapshaperReady(): Promise<any> {
-  if (window.mapshaper?.applyCommands) return window.mapshaper;
-  if (!window.__mapshaperLoading__) {
-    window.__mapshaperLoading__ = new Promise((resolve, reject) => {
-      const urls = [
-        "https://cdn.jsdelivr.net/npm/mapshaper@0.6.113/dist/mapshaper.js",
-        "https://unpkg.com/mapshaper@0.6.113/dist/mapshaper.js",
-      ];
-      let i = 0;
-      const next = () => {
-        if (i >= urls.length)
-          return reject(new Error("Gagal memuat Mapshaper"));
-        const s = document.createElement("script");
-        s.async = true;
-        s.crossOrigin = "anonymous";
-        s.src = urls[i++];
-        const to = window.setTimeout(() => {
-          s.onload = null;
-          s.onerror = null;
-          s.remove();
-          next();
-        }, 12000);
-        s.onload = () => {
-          window.clearTimeout(to);
-          if (window.mapshaper?.applyCommands) resolve(window.mapshaper);
-          else next();
-        };
-        s.onerror = () => {
-          window.clearTimeout(to);
-          s.remove();
-          next();
-        };
-        document.head.appendChild(s);
-      };
-      next();
-    });
-  }
-  return window.__mapshaperLoading__;
-}
-
-/** Muat Zip.js (writer modern) */
-async function ensureZipJsReady(): Promise<any> {
-  if (window.zip?.ZipWriter) return window.zip;
-  if (!window.__zipjsLoading__) {
-    window.__zipjsLoading__ = new Promise((resolve, reject) => {
-      const urls = [
-        "https://cdn.jsdelivr.net/npm/@zip.js/zip.js@2.7.73/dist/zip.min.js",
-        "https://unpkg.com/@zip.js/zip.js@2.7.73/dist/zip.min.js",
-      ];
-      let i = 0;
-      const next = () => {
-        if (i >= urls.length) return reject(new Error("Gagal memuat Zip.js"));
-        const s = document.createElement("script");
-        s.async = true;
-        s.crossOrigin = "anonymous";
-        s.src = urls[i++];
-        const to = window.setTimeout(() => {
-          s.onload = null;
-          s.onerror = null;
-          s.remove();
-          next();
-        }, 12000);
-        s.onload = () => {
-          window.clearTimeout(to);
-          if (window.zip?.ZipWriter) resolve(window.zip);
-          else next();
-        };
-        s.onerror = () => {
-          window.clearTimeout(to);
-          s.remove();
-          next();
-        };
-        document.head.appendChild(s);
-      };
-      next();
-    });
-  }
-  return window.__zipjsLoading__;
-}
-
-/** Validasi isi ZIP: harus ada SHP/SHX/DBF */
-async function zipHasShapefileParts(blob: Blob): Promise<boolean> {
-  try {
-    // Skip validation if blob is too small
-    if (blob.size < 100) {
-      console.log("ZIP too small for validation");
-      return false;
-    }
-
-    const ziplib = await ensureZipJsReady();
-    const zr = new ziplib.ZipReader(new ziplib.BlobReader(blob));
-    const entries = await zr.getEntries();
-    await zr.close();
-
-    console.log(
-      "ZIP entries found:",
-      entries.map((e: any) => e.filename)
-    );
-
-    const hasSHP = entries.some((e: any) => /\.shp$/i.test(e.filename));
-    const hasSHX = entries.some((e: any) => /\.shx$/i.test(e.filename));
-    const hasDBF = entries.some((e: any) => /\.dbf$/i.test(e.filename));
-
-    console.log("Shapefile parts validation:", { hasSHP, hasSHX, hasDBF });
-
-    // For now, just check if we have at least one shapefile component
-    // This is more lenient to avoid false negatives
-    return hasSHP || hasSHX || hasDBF;
-  } catch (error) {
-    console.error("Error validating ZIP contents:", error);
-    // Don't fail the export if validation fails
-    return true;
-  }
-}
-
-/* =======================  App code  ======================= */
+import type {
+  Feature as GeoJSONFeature,
+  FeatureCollection as GeoJSONFeatureCollection,
+  Geometry as GeoJSONGeometry,
+} from "geojson";
 
 type Kind = "kabupaten" | "kecamatan" | "kelurahan" | "custom";
 
-function styleCfgForKind(kind: Kind) {
+type StyleColorCfg = {
+  borderColor: string;
+  fillColor: string;
+};
+
+function styleCfgForKind(kind: Kind): StyleColorCfg {
   switch (kind) {
     case "kabupaten":
-      return { borderColor: "#f59e0b", fillColor: "#fbbf24" };
+      return { borderColor: "#ef4444", fillColor: "#f87171" };
     case "kecamatan":
-      return { borderColor: "#10b981", fillColor: "#34d399" };
+      return { borderColor: "#f97316", fillColor: "#fb923c" };
     case "kelurahan":
-      return { borderColor: "#8b5cf6", fillColor: "#a78bfa" };
+      return { borderColor: "#10b981", fillColor: "#34d399" };
     default:
       return { borderColor: "#0ea5e9", fillColor: "#22d3ee" };
   }
 }
 
 type Pair = { codeKey: string; nameKey: string };
+
 function aliasForKind(kind: Kind): Pair {
   switch (kind) {
     case "kabupaten":
@@ -343,10 +75,14 @@ type RegistryItem = {
   count: number;
   meta?: Record<string, any>;
 };
+
 const REGKEY = "__taxmap_dataset_registry__";
+
 function ensureRegistry(): Map<string, RegistryItem> {
   const g: any = window as any;
-  if (!g[REGKEY] || !(g[REGKEY] instanceof Map)) g[REGKEY] = new Map();
+  if (!g[REGKEY] || !(g[REGKEY] instanceof Map)) {
+    g[REGKEY] = new Map<string, RegistryItem>();
+  }
   return g[REGKEY] as Map<string, RegistryItem>;
 }
 
@@ -361,6 +97,27 @@ const COORD_TOLERANCE = 1e-9;
 type NormalizeOptions = {
   allowDegenerate?: boolean;
 };
+
+function isTypedNumericArray(value: unknown): value is ArrayLike<number> {
+  return (
+    value != null &&
+    typeof value === "object" &&
+    ArrayBuffer.isView(value as any) &&
+    !(value instanceof DataView)
+  );
+}
+
+function expandNumericPairs(source: ArrayLike<number>): [number, number][] {
+  const coords: [number, number][] = [];
+  const len = source.length ?? 0;
+  for (let i = 0; i + 1 < len; i += 2) {
+    const x = toFiniteNumber(source[i]);
+    const y = toFiniteNumber(source[i + 1]);
+    if (x == null || y == null) continue;
+    coords.push([x, y]);
+  }
+  return coords;
+}
 
 function numbersEqual(a: number, b: number) {
   return Math.abs(a - b) <= COORD_TOLERANCE;
@@ -380,6 +137,12 @@ function toFiniteNumber(value: unknown): number | null {
 }
 
 function readCoordinate(candidate: any): [number, number] | null {
+  if (isTypedNumericArray(candidate) && candidate.length >= 2) {
+    const x = toFiniteNumber(candidate[0]);
+    const y = toFiniteNumber(candidate[1]);
+    if (x == null || y == null) return null;
+    return [x, y];
+  }
   if (Array.isArray(candidate) && candidate.length >= 2) {
     const x = toFiniteNumber(candidate[0]);
     const y = toFiniteNumber(candidate[1]);
@@ -419,12 +182,17 @@ function sanitizeLinearRing(
   input: any,
   allowDegenerate: boolean
 ): [number, number][] | null {
-  if (!Array.isArray(input)) return null;
+  const source = Array.isArray(input)
+    ? input
+    : isTypedNumericArray(input)
+    ? expandNumericPairs(input)
+    : [];
+  if (!Array.isArray(source) || !source.length) return null;
 
   const cleaned: [number, number][] = [];
   let prev: [number, number] | null = null;
 
-  for (const candidate of input) {
+  for (const candidate of source) {
     const coord = readCoordinate(candidate);
     if (!coord) continue;
     if (
@@ -452,9 +220,14 @@ function normalizePolygonRings(
   input: any,
   options: NormalizeOptions = {}
 ): PolygonRings {
-  if (!Array.isArray(input)) return [];
+  const sources = Array.isArray(input)
+    ? input
+    : isTypedNumericArray(input)
+    ? [input]
+    : [];
+  if (!sources.length) return [];
   const rings: PolygonRings = [];
-  for (const candidate of input) {
+  for (const candidate of sources) {
     const ring = sanitizeLinearRing(
       candidate,
       Boolean(options.allowDegenerate)
@@ -476,15 +249,19 @@ function cloneMultiPolygonCoordinates(
   return polygons.map((poly) => clonePolygonCoordinates(poly));
 }
 
+function normalizeGeometryType(type: unknown): string {
+  return typeof type === "string" ? type.trim().toLowerCase() : "";
+}
+
 function normalizePolygonGeometry(
   geomObj: any
 ): NormalizedPolygonGeometry | null {
   if (!geomObj) return null;
 
-  const rawType = typeof geomObj.type === "string" ? geomObj.type : "";
-  const type = rawType.toLowerCase();
+  const type = normalizeGeometryType(geomObj.type);
+  if (!type) return null;
 
-  if (type === "geometrycollection") {
+  if (type.startsWith("geometrycollection")) {
     const geometries = Array.isArray(geomObj.geometries)
       ? geomObj.geometries
       : [];
@@ -507,21 +284,11 @@ function normalizePolygonGeometry(
     return { type: "MultiPolygon", coordinates: collected };
   }
 
-  if (type === "polygon") {
-    const coordsSource =
-      Array.isArray(geomObj.coordinates) && geomObj.coordinates.length
-        ? geomObj.coordinates
-        : Array.isArray((geomObj as any).rings)
-        ? (geomObj as any).rings
-        : [];
-    const rings = normalizePolygonRings(coordsSource);
-    if (!rings.length) return null;
-    return { type: "Polygon", coordinates: rings };
-  }
-
-  if (type === "multipolygon") {
+  if (type.startsWith("multipolygon")) {
     const sources = Array.isArray(geomObj.coordinates)
       ? geomObj.coordinates
+      : isTypedNumericArray(geomObj.coordinates)
+      ? [geomObj.coordinates]
       : [];
     const polygons: PolygonRings[] = [];
     for (const poly of sources) {
@@ -530,6 +297,20 @@ function normalizePolygonGeometry(
     }
     if (!polygons.length) return null;
     return { type: "MultiPolygon", coordinates: polygons };
+  }
+
+  if (type.startsWith("polygon")) {
+    const coordsSource =
+      Array.isArray(geomObj.coordinates) && geomObj.coordinates.length
+        ? geomObj.coordinates
+        : Array.isArray((geomObj as any).rings)
+        ? (geomObj as any).rings
+        : isTypedNumericArray(geomObj.coordinates)
+        ? [geomObj.coordinates]
+        : [];
+    const rings = normalizePolygonRings(coordsSource);
+    if (!rings.length) return null;
+    return { type: "Polygon", coordinates: rings };
   }
 
   return null;
@@ -577,103 +358,114 @@ function sanitizeFeatureCollection(fc: any) {
   };
 }
 
-function flattenFeatureCollectionToPolygons(fc: {
-  type: string;
-  features: any[];
-}) {
-  const flattened: any[] = [];
-  for (const feature of fc.features || []) {
-    const normalized = normalizePolygonGeometry(feature?.geometry);
-    if (!normalized) continue;
-    const props = { ...(feature?.properties || {}) };
-    if (normalized.type === "Polygon") {
-      flattened.push({
-        type: "Feature",
-        properties: props,
-        geometry: {
-          type: "Polygon",
-          coordinates: clonePolygonCoordinates(normalized.coordinates),
-        },
-      });
-    } else {
-      flattened.push({
-        type: "Feature",
-        properties: props,
-        geometry: {
-          type: "MultiPolygon",
-          coordinates: cloneMultiPolygonCoordinates(normalized.coordinates),
-        },
-      });
+function fallbackPolygonFeatureCollection(
+  fc: any
+): GeoJSONFeatureCollection | null {
+  if (!fc || !Array.isArray(fc.features)) return null;
+  const features = fc.features
+    .map((feat: any) => {
+      if (!feat || typeof feat !== "object") return null;
+      const geom = feat.geometry as GeoJSONGeometry | undefined;
+      const type = normalizeGeometryType(geom?.type);
+      if (
+        !type.startsWith("polygon") &&
+        !type.startsWith("multipolygon") &&
+        !type.startsWith("geometrycollection")
+      ) {
+        return null;
+      }
+      try {
+        const clonedGeom =
+          geom && typeof geom === "object"
+            ? (JSON.parse(JSON.stringify(geom)) as GeoJSONGeometry)
+            : null;
+        if (!clonedGeom) return null;
+        const props =
+          feat && typeof feat === "object"
+            ? { ...(feat.properties || {}) }
+            : {};
+        const base: GeoJSONFeature = {
+          type: "Feature",
+          properties: props,
+          geometry: clonedGeom,
+        };
+        if ("id" in feat && feat.id != null) {
+          base.id = feat.id as string | number;
+        }
+        return base;
+      } catch (error) {
+        console.warn("fallback clone failed for feature:", error);
+        return null;
+      }
+    })
+    .filter((f: GeoJSONFeature | null): f is GeoJSONFeature => Boolean(f));
+  if (!features.length) return null;
+  return { type: "FeatureCollection", features };
+}
+
+async function flattenZipToRoot(
+  buffer: ArrayBuffer
+): Promise<Uint8Array | null> {
+  try {
+    const sourceZip = await JSZip.loadAsync(buffer);
+    const flattened = new JSZip();
+    let changed = false;
+    const entries = Object.values(sourceZip.files ?? {});
+    await Promise.all(
+      entries.map(async (entry) => {
+        if (!entry || entry.dir) return;
+        const normalized = entry.name.replace(/\\/g, "/");
+        const parts = normalized.split("/").filter(Boolean);
+        if (!parts.length) return;
+        const fileName = parts.pop()!;
+        const prefix = parts.length ? `${parts.join("_")}_` : "";
+        const targetName = `${prefix}${fileName}`;
+        if (parts.length) changed = true;
+        const data = await entry.async("uint8array");
+        flattened.file(targetName, data);
+      })
+    );
+    if (!changed) return null;
+    const output = await flattened.generateAsync({ type: "uint8array" });
+    return output;
+  } catch (error) {
+    console.warn("flattenZipToRoot failed:", error);
+    return null;
+  }
+}
+
+async function parseShapefileZip(buffer: ArrayBuffer): Promise<any> {
+  const shapefile: any = shp;
+  const attempts: (ArrayBuffer | Uint8Array)[] = [buffer];
+  const flattened = await flattenZipToRoot(buffer);
+  if (flattened) attempts.push(flattened);
+  let lastError: unknown = null;
+  for (const attempt of attempts) {
+    const candidate =
+      attempt instanceof Uint8Array ? attempt : new Uint8Array(attempt);
+    try {
+      if (typeof shapefile === "function") {
+        return await shapefile(candidate);
+      }
+    } catch (error) {
+      lastError = error;
+    }
+    if (typeof shapefile?.parseZip === "function") {
+      try {
+        return await shapefile.parseZip(candidate);
+      } catch (error) {
+        lastError = error;
+      }
     }
   }
-  return { type: "FeatureCollection", features: flattened };
+  if (lastError) throw lastError;
+  throw new Error("Gagal membaca file shapefile ZIP");
 }
 
 export default function LeftDock() {
   const { baseLayer, setBaseLayer, selectedId, setFocus, selectedLayerId } =
     useMapStore();
   const { map, addLayer, layers } = useLayersStore();
-
-  // Preload tool agar cepat
-  useEffect(() => {
-    const preloadLibraries = async () => {
-      try {
-        console.log("Preloading export libraries...");
-        await Promise.allSettled([
-          ensureShpWriteClassicReady(),
-          ensureShpWriterReady(),
-          ensureMapshaperReady(),
-          ensureZipJsReady(),
-        ]);
-        console.log("Export libraries preloading completed");
-      } catch (error) {
-        console.warn("Error during library preloading:", error);
-      }
-    };
-
-    preloadLibraries();
-
-    // Debug function for testing export functionality
-    (window as any).debugExport = async () => {
-      console.log("=== Export Debug Information ===");
-      console.log(
-        "Mapshaper:",
-        window.mapshaper ? "[OK] Loaded" : "[X] Not loaded"
-      );
-      console.log("Zip.js:", window.zip ? "[OK] Loaded" : "[X] Not loaded");
-      console.log(
-        "@crmackey/shp-write:",
-        window.shpwriter ? "[OK] Loaded" : "[X] Not loaded"
-      );
-      console.log(
-        "Classic shp-write:",
-        window.shpwrite ? "[OK] Loaded" : "[X] Not loaded"
-      );
-
-      // Test library functions
-      try {
-        if (window.mapshaper) {
-          console.log(
-            "Mapshaper applyCommands:",
-            typeof window.mapshaper.applyCommands
-          );
-        }
-        if (window.zip) {
-          console.log("Zip.js ZipWriter:", typeof window.zip.ZipWriter);
-        }
-        if (window.shpwriter) {
-          console.log("shpwriter zip:", typeof window.shpwriter.zip);
-        }
-        if (window.shpwrite) {
-          console.log("shpwrite zip:", typeof window.shpwrite.zip);
-        }
-      } catch (error) {
-        console.error("Error testing library functions:", error);
-      }
-
-      console.log("=== End Debug Information ===");
-    };
-  }, []);
 
   // Interactions
   const drawRef = useRef<Draw | null>(null);
@@ -747,70 +539,6 @@ export default function LeftDock() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   /* ---------- Import ---------- */
-  function normalizeFeatureProps(f: any, idx: number) {
-    const p = f.getProperties ? f.getProperties() : {};
-    const idKeys = [
-      "KD_KEL",
-      "KD_DESA",
-      "D_KD_KEL",
-      "kd_kel",
-      "D_KD_KEC",
-      "KD_KEC",
-      "kd_kec",
-      "KD_KAB",
-      "KD_KK",
-      "KD_KABKOT",
-      "kd_kab",
-      "id",
-      "ID",
-      "OBJECTID",
-      "OBJECTID_1",
-      "KODE",
-      "NO",
-      "FID",
-      "D_KD_DT2",
-    ];
-    let idVal: any = idKeys
-      .map((k) => p?.[k])
-      .find((v) => v != null && String(v) !== "");
-    if (idVal === undefined) idVal = `feat_${idx}`;
-    f.set("id", String(idVal));
-
-    const nameKeys = [
-      "NAMA",
-      "NAMA_KEL",
-      "NM_KEL",
-      "D_NM_KEL",
-      "nm_kel",
-      "NAMA_KEC",
-      "NM_KEC",
-      "D_NM_KEC",
-      "KECAMATAN",
-      "Kecamatan",
-      "WADMKC",
-      "nm_kec",
-      "NAMA_KAB",
-      "NM_KAB",
-      "WADMKD",
-      "KABUPATEN",
-      "Kabupaten",
-      "name",
-      "NAME",
-      "D_NM_DT2",
-    ];
-    const hasLetters = (v: any) =>
-      typeof v === "string" && v.trim() !== "" && /[A-Za-z]/.test(v);
-    let nameVal: any = nameKeys.map((k) => p?.[k]).find(hasLetters);
-    if (!nameVal) {
-      const dynKey = Object.keys(p || {}).find((k) =>
-        /kec|kel|desa|kab|nama|name/i.test(k)
-      );
-      const dynVal = dynKey ? p[dynKey] : undefined;
-      if (hasLetters(dynVal)) nameVal = dynVal;
-    }
-    if (nameVal) f.set("name", String(nameVal).trim());
-  }
-
   function inferKindFromFeatureCollection(fc: any): Kind {
     if (!fc || !Array.isArray(fc.features)) return "custom";
     const patterns: Record<Exclude<Kind, "custom">, RegExp[]> = {
@@ -925,15 +653,7 @@ export default function LeftDock() {
 
       if (/\.zip$/i.test(file.name)) {
         const buffer = await file.arrayBuffer();
-        try {
-          parsed = await (shp as any)(buffer);
-        } catch (err) {
-          if (typeof (shp as any).parseZip === "function") {
-            parsed = await (shp as any).parseZip(buffer);
-          } else {
-            throw err;
-          }
-        }
+        parsed = await parseShapefileZip(buffer);
       } else if (/\.(geo)?json$/i.test(file.name)) {
         const text = await file.text();
         parsed = JSON.parse(text);
@@ -946,16 +666,10 @@ export default function LeftDock() {
         throw new Error("Tidak menemukan FeatureCollection di dalam file.");
       }
 
-      const sanitized = sanitizeFeatureCollection(rawFC);
-      if (
-        !sanitized ||
-        !Array.isArray(sanitized.features) ||
-        !sanitized.features.length
-      ) {
-        throw new Error(
-          "Tidak menemukan Polygon/MultiPolygon yang valid di dalam file."
-        );
-      }
+      let sanitized =
+        sanitizeFeatureCollection(rawFC) ||
+        fallbackPolygonFeatureCollection(rawFC) ||
+        rawFC; // JANGAN buang datanya, biar TaxMap yang putuskan
 
       const datasetKind = inferKindFromFeatureCollection(sanitized);
       const datasetName = datasetNameFromFile(file.name, datasetKind);
@@ -1848,7 +1562,7 @@ export default function LeftDock() {
   const [openExport, setOpenExport] = useState(false);
   const openExportModal = () => setOpenExport(true);
 
-  /* ---------- Export helpers (Mapshaper-first) ---------- */
+  /* ---------- Export helpers ---------- */
   function sanitizeForDbf(
     props: Record<string, any>,
     dropIdName: boolean = true
@@ -1881,7 +1595,7 @@ export default function LeftDock() {
     const feats = src.getFeatures();
     if (!feats.length) throw new Error("Layer kosong.");
 
-    console.log(`Processing ${feats.length} features for export`);
+    console.log("Processing " + feats.length + " features for export");
 
     const layerKind: Kind =
       ((layer as any).get && (layer as any).get("appKind")) || "custom";
@@ -1892,15 +1606,18 @@ export default function LeftDock() {
         try {
           const g = ft.getGeometry();
           if (!g) {
-            console.warn(`Feature ${idx} has no geometry, skipping`);
+            console.warn("Feature " + idx + " has no geometry, skipping");
             return null;
           }
 
-          // Validate geometry type
           const geomType = g.getType();
           if (!["Polygon", "MultiPolygon"].includes(geomType)) {
             console.warn(
-              `Feature ${idx} has unsupported geometry type: ${geomType}, skipping`
+              "Feature " +
+                idx +
+                " has unsupported geometry type: " +
+                geomType +
+                ", skipping"
             );
             return null;
           }
@@ -1910,13 +1627,16 @@ export default function LeftDock() {
           const geomObj = normalizePolygonGeometry(geomObjRaw);
 
           if (!geomObj) {
-            console.warn(`Feature ${idx} failed geometry conversion, skipping`);
+            console.warn(
+              "Feature " + idx + " failed geometry conversion, skipping"
+            );
             return null;
           }
 
-          // Validate geometry coordinates
           if (!geomObj.coordinates || !Array.isArray(geomObj.coordinates)) {
-            console.warn(`Feature ${idx} has invalid coordinates, skipping`);
+            console.warn(
+              "Feature " + idx + " has invalid coordinates, skipping"
+            );
             return null;
           }
 
@@ -1935,8 +1655,8 @@ export default function LeftDock() {
             props = sanitizeForDbf(restNoIdName, true);
           } else {
             const keep: Record<string, any> = { ...rest };
-            if (keep.id == null) keep.id = `feat_${Date.now()}_${idx}`;
-            if (keep.name == null) keep.name = `Feature ${idx}`;
+            if (keep.id == null) keep.id = "feat_" + Date.now() + "_" + idx;
+            if (keep.name == null) keep.name = "Feature " + idx;
             [
               "D_KD_KEC",
               "D_NM_KEC",
@@ -1948,14 +1668,13 @@ export default function LeftDock() {
             props = sanitizeForDbf(keep, false);
           }
 
-          // Ensure properties object exists and has valid data
           if (!props || typeof props !== "object") {
             props = {};
           }
 
           return { type: "Feature", properties: props, geometry: geomObj };
         } catch (error) {
-          console.error(`Error processing feature ${idx}:`, error);
+          console.error("Error processing feature " + idx + ":", error);
           return null;
         }
       })
@@ -1966,10 +1685,9 @@ export default function LeftDock() {
     if (features.length === 0)
       throw new Error("Tidak ada feature valid untuk diexport.");
 
-    console.log(`Successfully processed ${features.length} features`);
+    console.log("Successfully processed " + features.length + " features");
     const fc = { type: "FeatureCollection", features };
 
-    // Validate final feature collection
     try {
       const fcString = JSON.stringify(fc);
       if (!fcString || fcString.length < 50) {
@@ -1977,7 +1695,7 @@ export default function LeftDock() {
       }
       console.log("Feature collection validation passed");
     } catch (error) {
-      throw new Error(`Feature collection validation failed: ${error}`);
+      throw new Error("Feature collection validation failed: " + error);
     }
 
     return fc;
@@ -1985,82 +1703,6 @@ export default function LeftDock() {
 
   const WGS84_PRJ =
     'GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433],AUTHORITY["EPSG","4326"]]';
-
-  function normalizeZipToBlob(zipOut: any): Blob {
-    if (zipOut instanceof Blob) return zipOut;
-    if (zipOut instanceof ArrayBuffer)
-      return new Blob([zipOut], { type: "application/zip" });
-    if (zipOut instanceof Uint8Array) {
-      const buf =
-        zipOut.buffer instanceof ArrayBuffer
-          ? zipOut.buffer.slice(
-              zipOut.byteOffset,
-              zipOut.byteOffset + zipOut.byteLength
-            )
-          : (() => {
-              const b = new ArrayBuffer(zipOut.byteLength);
-              new Uint8Array(b).set(zipOut);
-              return b;
-            })();
-      return new Blob([buf], { type: "application/zip" });
-    }
-    if (ArrayBuffer.isView(zipOut)) {
-      const view = zipOut as ArrayBufferView;
-      const srcU8 = new Uint8Array(
-        view.buffer as any,
-        view.byteOffset,
-        view.byteLength
-      );
-      const b = new ArrayBuffer(srcU8.byteLength);
-      new Uint8Array(b).set(srcU8);
-      return new Blob([b], { type: "application/zip" });
-    }
-    if (typeof zipOut === "string") {
-      const bin = atob(zipOut);
-      const u8 = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-      return new Blob([u8.buffer], { type: "application/zip" });
-    }
-    return new Blob([], { type: "application/zip" });
-  }
-
-  async function repackageShapefileZip(
-    blob: Blob,
-    baseName: string
-  ): Promise<Blob> {
-    try {
-      const buffer = await blob.arrayBuffer();
-      const sourceZip = await JSZip.loadAsync(buffer);
-      const outputZip = new JSZip();
-      const seenExt = new Set<string>();
-      const targetExts = ["shp", "shx", "dbf", "prj"];
-
-      await Promise.all(
-        Object.values(sourceZip.files).map(async (entry) => {
-          if (!entry || entry.dir) return;
-          const match = entry.name.match(/\.([a-z0-9]+)$/i);
-          if (!match) return;
-          const ext = match[1].toLowerCase();
-          if (!targetExts.includes(ext) || seenExt.has(ext)) return;
-          const data = await entry.async("uint8array");
-          outputZip.file(`${baseName}.${ext}`, data);
-          seenExt.add(ext);
-        })
-      );
-
-      if (seenExt.size === 0) return blob;
-
-      const repacked = await outputZip.generateAsync({
-        type: "uint8array",
-        compression: "DEFLATE",
-        compressionOptions: { level: 3 },
-      });
-      return normalizeZipToBlob(repacked);
-    } catch (error) {
-      console.warn("Failed to repackage shapefile ZIP:", error);
-      return blob;
-    }
-  }
 
   function shapefileGeometryFromFeatureGeometry(
     geometry: any
@@ -2108,282 +1750,62 @@ export default function LeftDock() {
     return new Uint8Array();
   }
 
-  async function createZipWithShpWrite(
-    writer: any,
+  async function createShapefileZip(
     fc: { type: string; features: any[] },
     baseName: string
   ): Promise<Blob> {
-    if (!writer) {
-      throw new Error("shp-write tidak tersedia");
+    const rows: Record<string, any>[] = [];
+    const geometries: Array<PolygonRings | PolygonRings[]> = [];
+
+    for (const feature of fc.features || []) {
+      const geomParts = shapefileGeometryFromFeatureGeometry(feature.geometry);
+      if (!geomParts) continue;
+      geometries.push(geomParts);
+      rows.push({ ...(feature.properties || {}) });
     }
 
-    const hasWrite = typeof writer.write === "function";
-    const hasZip = typeof writer.zip === "function";
-    console.log("shp-write capabilities:", { write: hasWrite, zip: hasZip });
-    const flattenedFC = flattenFeatureCollectionToPolygons(fc);
-
-    if (hasWrite) {
-      const rows: Record<string, any>[] = [];
-      const geometries: Array<PolygonRings | PolygonRings[]> = [];
-
-      fc.features.forEach((feature) => {
-        const geomParts = shapefileGeometryFromFeatureGeometry(
-          feature.geometry
-        );
-        if (!geomParts) return;
-        geometries.push(geomParts);
-        rows.push({ ...(feature.properties || {}) });
-      });
-
-      if (!geometries.length) {
-        throw new Error("Tidak ada geometri polygon valid untuk shp-write");
-      }
-
-      const files = await new Promise<any>((resolve, reject) => {
-        try {
-          writer.write(rows, "POLYGON", geometries, (err: any, result: any) => {
-            if (err) reject(err);
-            else resolve(result);
-          });
-        } catch (error) {
-          reject(error);
-        }
-      });
-
-      console.log(
-        "shp-write.write buffers length:",
-        files?.shp?.byteLength ?? files?.shp?.length,
-        files?.shx?.byteLength ?? files?.shx?.length,
-        files?.dbf?.byteLength ?? files?.dbf?.length
-      );
-
-      const zip = new JSZip();
-      const folder = zip.folder("layers");
-      if (!folder) throw new Error("Gagal membuat folder ZIP 'layers'.");
-
-      const shpU8 = toUint8Array(files.shp);
-      const shxU8 = toUint8Array(files.shx);
-      const dbfU8 = toUint8Array(files.dbf);
-      const prjText =
-        typeof files.prj === "string" && files.prj.trim().length > 0
-          ? files.prj
-          : WGS84_PRJ;
-
-      folder.file(`${baseName}.shp`, shpU8, { binary: true });
-      folder.file(`${baseName}.shx`, shxU8, { binary: true });
-      folder.file(`${baseName}.dbf`, dbfU8, { binary: true });
-      folder.file(`${baseName}.prj`, prjText);
-
-      const zipped = await zip.generateAsync({
-        type: "uint8array",
-        compression: "DEFLATE",
-        compressionOptions: { level: 3 },
-      });
-
-      return normalizeZipToBlob(zipped);
+    if (!geometries.length) {
+      throw new Error("Tidak ada geometri polygon valid untuk export");
     }
 
-    if (hasZip) {
-      const options = {
-        prj: WGS84_PRJ,
-        encoding: "utf8",
-        types: {
-          polygon: baseName,
-          polyline: baseName,
-          point: baseName,
-        },
-      };
-
-      let out = writer.zip(flattenedFC, options);
-      if (out && typeof out.then === "function") {
-        out = await out;
-      }
-      const zipBlob = normalizeZipToBlob(out);
-      return repackageShapefileZip(zipBlob, baseName);
-    }
-
-    throw new Error(
-      "shp-write tidak menyediakan metode export (zip/write) yang kompatibel"
-    );
-  }
-
-  /** Keluarkan ZIP via Mapshaper (plan A), kalau gagal: pecah SHP/SHX/DBF/PRJ lalu zip dengan Zip.js */
-  async function exportWithMapshaperZipFirst(
-    fc: any,
-    baseName: string
-  ): Promise<Blob> {
-    const ms = await ensureMapshaperReady();
-
-    // Validate feature collection before processing
-    if (!fc || !fc.features || fc.features.length === 0) {
-      throw new Error("Invalid feature collection: no features found");
-    }
-
-    // Ensure all features have valid geometry
-    const validFeatures = fc.features.filter(
-      (f: any) =>
-        f.geometry &&
-        f.geometry.coordinates &&
-        Array.isArray(f.geometry.coordinates) &&
-        f.geometry.coordinates.length > 0
-    );
-
-    if (validFeatures.length === 0) {
-      throw new Error("No valid features with geometry found");
-    }
-
-    const validFC = { ...fc, features: validFeatures };
-    const fcString = JSON.stringify(validFC);
-    console.log(
-      `Processing ${validFeatures.length} valid features with Mapshaper`
-    );
-
-    // 1) Coba langsung generate ZIP shapefile
-    try {
-      console.log("Attempting direct ZIP generation with Mapshaper...");
-      const outFiles1 = await ms.applyCommands(
-        `-i in.json -o format=shapefile encoding=utf8 out.zip`,
-        { "in.json": fcString }
-      );
-      const rawZip = outFiles1["out.zip"];
-      const zipU8 =
-        rawZip instanceof Uint8Array
-          ? new Uint8Array(rawZip)
-          : rawZip instanceof ArrayBuffer
-          ? new Uint8Array(rawZip)
-          : null;
-
-      if (zipU8 && zipU8.byteLength > 0) {
-        const blob = new Blob([new Uint8Array(zipU8)], {
-          type: "application/zip",
+    const files = await new Promise<any>((resolve, reject) => {
+      try {
+        writeShapefile(rows, "POLYGON", geometries, (err: any, result: any) => {
+          if (err) reject(err);
+          else resolve(result);
         });
-        // Hanya return kalau ZIP benar berisi shapefile parts
-        if (await zipHasShapefileParts(blob)) {
-          console.log("Mapshaper direct ZIP generation successful");
-          return blob;
-        }
-        // kalau tidak valid, lanjut ke plan A.2
-        console.warn(
-          "Mapshaper direct ZIP generated but validation failed, trying manual approach"
-        );
-      } else {
-        console.warn("Mapshaper direct ZIP generation returned empty data");
+      } catch (error) {
+        reject(error);
       }
-    } catch (e) {
-      console.warn("Mapshaper ZIP langsung gagal, lanjut plan A.2:", e);
-    }
-
-    // 2) Ambil file pecahan SHP/SHX/DBF/PRJ lalu zip manual
-    try {
-      console.log("Attempting manual shapefile generation with Mapshaper...");
-      const outFiles2 = await ms.applyCommands(
-        `-i in.json -o format=shapefile encoding=utf8 out.shp`,
-        { "in.json": fcString }
-      );
-
-      const pieces = ["out.shp", "out.shx", "out.dbf", "out.prj"]
-        .map((name) => {
-          const raw = outFiles2[name];
-          const buf =
-            raw instanceof Uint8Array
-              ? new Uint8Array(raw)
-              : raw instanceof ArrayBuffer
-              ? new Uint8Array(raw)
-              : null;
-          return buf ? { name, data: buf } : null;
-        })
-        .filter(Boolean) as { name: string; data: Uint8Array }[];
-
-      if (!pieces.length) {
-        throw new Error("Mapshaper tidak mengembalikan file shapefile.");
-      }
-
-      console.log(
-        `Mapshaper generated ${pieces.length} shapefile files:`,
-        pieces.map((p) => p.name)
-      );
-
-      const zip = await ensureZipJsReady();
-      const writer = new zip.BlobWriter("application/zip");
-      const zipWriter = new zip.ZipWriter(writer, { zip64: true });
-
-      for (const p of pieces) {
-        const newName = p.name.replace(/^out\./, `${baseName}.`);
-        await zipWriter.add(
-          newName,
-          new zip.BlobReader(new Blob([new Uint8Array(p.data)]))
-        );
-      }
-
-      const blob = await zipWriter.close();
-
-      // Wajib valid
-      if (!(await zipHasShapefileParts(blob))) {
-        throw new Error("Mapshaper menghasilkan ZIP tanpa shapefile");
-      }
-      console.log("Mapshaper manual ZIP creation successful");
-      return blob;
-    } catch (error) {
-      console.error("Mapshaper manual approach failed:", error);
-      throw new Error(`Mapshaper export failed: ${error}`);
-    }
-  }
-
-  /* =======================  Export validation helpers  ======================= */
-  async function validateExportLibraries(): Promise<void> {
-    console.log("=== VALIDATING EXPORT LIBRARIES ===");
-    const checks = [
-      { name: "Mapshaper", check: () => window.mapshaper?.applyCommands },
-      { name: "Zip.js", check: () => window.zip?.ZipWriter },
-      { name: "@crmackey/shp-write", check: () => window.shpwriter?.zip },
-      { name: "Classic shp-write", check: () => window.shpwrite?.zip },
-    ];
-
-    console.log("Checking library availability...");
-    checks.forEach((lib) => {
-      console.log(
-        `${lib.name}:`,
-        lib.check() ? "[OK] Available" : "[X] Not available"
-      );
     });
 
-    const results = await Promise.allSettled([
-      ensureMapshaperReady(),
-      ensureZipJsReady(),
-      ensureShpWriterReady(),
-      ensureShpWriteClassicReady(),
-    ]);
+    const zip = new JSZip();
+    const shpU8 = toUint8Array(files.shp);
+    const shxU8 = toUint8Array(files.shx);
+    const dbfU8 = toUint8Array(files.dbf);
+    const prjText =
+      typeof files.prj === "string" && files.prj.trim().length > 0
+        ? files.prj
+        : WGS84_PRJ;
 
-    const failed = checks.filter((lib, index) => {
-      const result = results[index];
-      const isFailed = result.status === "rejected" || !lib.check();
-      console.log(`${lib.name}:`, isFailed ? "[X] Failed" : "[OK] Ready");
-      if (result.status === "rejected") {
-        console.error(`  Error:`, result.reason);
-      }
-      return isFailed;
+    zip.file(baseName + ".shp", shpU8, { binary: true });
+    zip.file(baseName + ".shx", shxU8, { binary: true });
+    zip.file(baseName + ".dbf", dbfU8, { binary: true });
+    zip.file(baseName + ".prj", prjText);
+
+    const zippedBlob = await zip.generateAsync({
+      type: "blob",
+      compression: "DEFLATE",
+      compressionOptions: { level: 3 },
     });
 
-    if (failed.length > 0) {
-      console.warn(
-        "Some export libraries failed to load:",
-        failed.map((f) => f.name)
-      );
-    } else {
-      console.log("All export libraries are ready");
-    }
+    return zippedBlob; // langsung Blob, selesai drama
   }
 
-  /* =======================  Export utama (Mapshaper-first)  ======================= */
   async function exportLayerToZip(layerId: string) {
     console.log("=== EXPORT DEBUG START ===");
     console.log("Starting export process...");
     console.log("Layer ID:", layerId);
-
-    // Validate libraries first
-    console.log("Validating export libraries...");
-    await validateExportLibraries();
-    console.log("Library validation completed");
 
     const entry = useLayersStore
       .getState()
@@ -2398,7 +1820,6 @@ export default function LeftDock() {
     console.log("Feature collection built:", fc);
     console.log("Feature count:", fc?.features?.length);
 
-    // Nama file dasar rapi
     const base =
       (lyr.get && (lyr.get("fileBase") as string)) ||
       (lyr.get && (lyr.get("appName") as string)) ||
@@ -2410,121 +1831,22 @@ export default function LeftDock() {
 
     let blob: Blob | null = null;
 
-    // Plan A: Mapshaper (langsung ZIP, atau pecah + Zip.js)
     try {
-      blob = await exportWithMapshaperZipFirst(fc, clean);
-    } catch (e) {
-      console.warn(
-        "Export via Mapshaper gagal, fallback ke @crmackey/shp-write:",
-        e
-      );
-    }
-
-    // Plan B: @crmackey/shp-write (CDN)
-    if (!blob) {
-      try {
-        console.log("=== PLAN B: @crmackey/shp-write (CDN) ===");
-        console.log("Attempting export with @crmackey/shp-write...");
-        const writer = await ensureShpWriterReady();
-        console.log("shpwriter loaded:", writer);
-        console.log("shpwriter.zip function:", typeof writer?.zip);
-
-        // Validate feature collection before passing to shp-write
-        if (!fc || !fc.features || fc.features.length === 0) {
-          throw new Error("Invalid feature collection: no features found");
-        }
-
-        console.log(`Creating ZIP with ${fc.features.length} features...`);
-        console.log("Feature collection sample:", fc.features[0]);
-
-        // Ensure all features have valid geometry
-        const validFeatures = fc.features.filter(
-          (f: any) =>
-            f.geometry &&
-            f.geometry.coordinates &&
-            Array.isArray(f.geometry.coordinates) &&
-            f.geometry.coordinates.length > 0
-        );
-
-        console.log(
-          `Valid features count: ${validFeatures.length}/${fc.features.length}`
-        );
-
-        if (validFeatures.length === 0) {
-          throw new Error("No valid features with geometry found");
-        }
-
-        const validFC = { ...fc, features: validFeatures };
-        console.log("Valid feature collection ready for shp-write export");
-
-        try {
-          console.log("Membangun ZIP menggunakan shp-write...");
-          const zipBlob = await createZipWithShpWrite(writer, validFC, clean);
-          console.log("shp-write ZIP size:", zipBlob.size);
-          blob = zipBlob;
-        } catch (zipError) {
-          console.error("Error creating ZIP with shp-write:", zipError);
-          console.error("Error details:", (zipError as any)?.message);
-          console.error("Error stack:", (zipError as any)?.stack);
-          throw zipError;
-        }
-      } catch (error) {
-        console.error("@crmackey/shp-write failed:", error);
-        console.error("Error details:", (error as any)?.message);
-        console.error("Error stack:", (error as any)?.stack);
-        throw new Error(`@crmackey/shp-write failed: ${error}`);
-      }
-    }
-
-    // Plan C: Classic shp-write fallback
-    if (!blob) {
-      try {
-        console.log("Attempting export with classic shp-write...");
-        const writer = await ensureShpWriteClassicReady();
-        console.log("Classic shp-write loaded, attempting to create ZIP...");
-
-        // Ensure all features have valid geometry
-        const validFeatures = fc.features.filter(
-          (f: any) =>
-            f.geometry &&
-            f.geometry.coordinates &&
-            Array.isArray(f.geometry.coordinates) &&
-            f.geometry.coordinates.length > 0
-        );
-
-        if (validFeatures.length === 0) {
-          throw new Error("No valid features with geometry found");
-        }
-
-        const validFC = { ...fc, features: validFeatures };
-        try {
-          console.log("Membangun ZIP menggunakan shp-write klasik...");
-          const zipBlob = await createZipWithShpWrite(writer, validFC, clean);
-          console.log("Classic shp-write ZIP size:", zipBlob.size);
-          blob = zipBlob;
-        } catch (zipError) {
-          console.error("Error creating ZIP with classic shp-write:", zipError);
-          throw zipError;
-        }
-      } catch (error) {
-        console.error("Classic shp-write failed:", error);
-        throw new Error(`Classic shp-write failed: ${error}`);
-      }
+      blob = await createShapefileZip(fc, clean);
+    } catch (error) {
+      console.error("@crmackey/shp-write export failed:", error);
     }
 
     if (!blob) {
-      // Final fallback: create GeoJSON download
-      console.log("All shapefile exports failed, falling back to GeoJSON...");
       try {
+        console.log("Falling back to GeoJSON export...");
         const geoJsonString = JSON.stringify(fc, null, 2);
         blob = new Blob([geoJsonString], { type: "application/json" });
-        console.log("GeoJSON fallback created successfully");
 
-        // Update download to use .geojson extension
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `${clean}.geojson`;
+        a.download = clean + ".geojson";
         document.body.appendChild(a);
         a.click();
         setTimeout(() => {
@@ -2548,7 +1870,7 @@ export default function LeftDock() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${clean}.zip`;
+    a.download = clean + ".zip";
     document.body.appendChild(a);
     a.click();
     setTimeout(() => {
@@ -2556,7 +1878,6 @@ export default function LeftDock() {
       URL.revokeObjectURL(url);
     }, 64);
   }
-
   /* ---------- UI ---------- */
   return (
     <div className="leftstack">
