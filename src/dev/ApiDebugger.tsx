@@ -1,3 +1,4 @@
+// src/dev/ApiDebugger.tsx
 import React from "react";
 import { API_BASE_URL, DEFAULT_USER, DEFAULT_PASS } from "../lib/config";
 import {
@@ -9,6 +10,8 @@ import {
   setTokenType,
   clearAccessToken,
 } from "../lib/api/client";
+
+type Mode = "list" | "count" | "single";
 
 type LogRow = {
   step: string;
@@ -31,7 +34,15 @@ function clip(x: any, n = 800) {
   }
 }
 
-// Build raw JSON:API-style query without encoding brackets/pipes.
+// Samakan skema jadi 'Bearer' biar konsisten
+function normalizeScheme(s: string | null | undefined): string {
+  if (!s) return "Bearer";
+  const k = s.toLowerCase();
+  if (k === "jws" || k === "jwt" || k === "bearer") return "Bearer";
+  return "Bearer";
+}
+
+// Build query list mentah (tanpa encode [])
 function buildListQuery(
   page: number,
   size: number,
@@ -56,14 +67,14 @@ export default function ApiDebugger() {
 
   // Token state
   const [token, setToken] = React.useState(getAccessToken() || "");
-  const [scheme, setScheme] = React.useState(getTokenType() || "jws");
+  const [scheme, setScheme] = React.useState(normalizeScheme(getTokenType()));
 
   // GET selector + params
-  const [mode, setMode] = React.useState<"list" | "count" | "single">("list");
+  const [mode, setMode] = React.useState<Mode>("list");
   const [pageNumber, setPageNumber] = React.useState(1);
   const [pageSize, setPageSize] = React.useState(10);
   const [includes, setIncludes] = React.useState("attribute");
-  const [filters, setFilters] = React.useState(""); // newline separated: status|eq|1
+  const [filters, setFilters] = React.useState(""); // newline: status|eq|1
   const [singleId, setSingleId] = React.useState("220");
 
   function push(row: Partial<LogRow>) {
@@ -78,11 +89,11 @@ export default function ApiDebugger() {
           at: now(),
         },
         ...prev,
-      ].slice(0, 120)
+      ].slice(0, 140)
     );
   }
 
-  // AUTH without Authorization header
+  // AUTH (tanpa Authorization header)
   async function doAuth() {
     try {
       setBusy(true);
@@ -95,11 +106,11 @@ export default function ApiDebugger() {
         { Accept: "*/*", "Content-Type": "application/json" }
       );
       const t = data.data?.accessToken || "";
-      const ty = (data.data?.tokenType || "jws") as string;
+      const ty = normalizeScheme(data.data?.tokenType);
       setToken(t);
       setAccessToken(t);
       setScheme(ty);
-      setTokenType(ty);
+      setTokenType(ty); // simpan 'Bearer', bukan 'jws'
       push({
         step: "AUTH /auth/request-token",
         url: __meta.url,
@@ -116,13 +127,14 @@ export default function ApiDebugger() {
   function clearTok() {
     clearAccessToken();
     setToken("");
-    setScheme("jws");
+    setScheme("Bearer");
     push({ step: "CLEAR TOKEN", body: "local token cleared" });
   }
 
-  function buildPath(): string {
-    if (mode === "count") return "/spatial-feature/count";
-    if (mode === "single")
+  // Path per mode
+  function buildPathFor(m: Mode): string {
+    if (m === "count") return "/spatial-feature/count";
+    if (m === "single")
       return `/spatial-feature/${singleId}?include[]=attribute`;
     const inc = includes
       .split(",")
@@ -136,19 +148,25 @@ export default function ApiDebugger() {
     return `/spatial-feature?${q}`;
   }
 
-  async function doGet() {
-    const path = buildPath();
+  // GET (mode eksplisit biar nggak kejebak race setState)
+  async function doGet(m?: Mode) {
+    const modeToUse = m ?? mode;
+    const path = buildPathFor(modeToUse);
     try {
       setBusy(true);
       const { data, __meta } = await getRaw<any>(path);
       push({
-        step: `GET ${mode}`,
+        step: `GET ${modeToUse}`,
         url: __meta.url,
         status: __meta.status,
         body: clip(data),
       });
     } catch (e: any) {
-      push({ step: `GET ${mode}`, url: e?.url, err: e?.message || String(e) });
+      push({
+        step: `GET ${modeToUse}`,
+        url: e?.url,
+        err: e?.message || String(e),
+      });
     } finally {
       setBusy(false);
     }
@@ -159,13 +177,9 @@ export default function ApiDebugger() {
       setBusy(true);
       await doAuth();
       await new Promise((r) => setTimeout(r, 50));
-      // LIST → COUNT → SINGLE
-      setMode("list");
-      await doGet();
-      setMode("count");
-      await doGet();
-      setMode("single");
-      await doGet();
+      await doGet("list");
+      await doGet("count");
+      await doGet("single");
     } finally {
       setBusy(false);
     }
@@ -183,7 +197,7 @@ export default function ApiDebugger() {
         border: "1px solid #2a2b2f",
         borderRadius: 10,
         padding: 12,
-        width: 440,
+        width: 460,
         fontSize: 13,
       }}
     >
@@ -390,7 +404,7 @@ export default function ApiDebugger() {
           style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}
         >
           <button
-            onClick={doGet}
+            onClick={() => doGet()}
             disabled={busy}
             style={{
               padding: "6px 10px",
@@ -403,7 +417,7 @@ export default function ApiDebugger() {
             GET Now
           </button>
           <button
-            onClick={doAuto}
+            onClick={() => doAuto()}
             disabled={busy}
             style={{
               padding: "6px 10px",
@@ -421,7 +435,7 @@ export default function ApiDebugger() {
           style={{ marginTop: 6, fontFamily: "monospace", color: "#a6a8ad" }}
         >
           Preview URL: {API_BASE_URL}
-          {buildPath()}
+          {buildPathFor(mode)}
         </div>
       </div>
 

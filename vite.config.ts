@@ -10,7 +10,12 @@ export default defineConfig({
         target: 'https://retfw.smartgov.id',
         changeOrigin: true,
         secure: true,
-        rewrite: (p) => p.replace(/^\/api/, '/framework'),
+        rewrite: p => p.replace(/^\/api/, '/framework'),
+        headers: {
+          Accept: '*/*',
+          Origin: 'https://retfw.smartgov.id',
+          Referer: 'https://retfw.smartgov.id/',
+        },
       },
     },
   },
