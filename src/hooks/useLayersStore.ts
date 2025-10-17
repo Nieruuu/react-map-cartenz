@@ -32,6 +32,7 @@ export interface LayerEntry {
   visible: boolean;
   layer: VectorLayer<VectorSource>;
   styleCfg: LayerStyleCfg;
+  typeCode?: string; // Store the spatial feature type code for API layers
 }
 
 /** ==== Utils ==== */

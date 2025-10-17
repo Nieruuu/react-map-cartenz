@@ -408,7 +408,7 @@ export default function RightDock() {
                         style={{ cursor: "pointer" }}
                       >
                         <div className="rd-title" title={l.name}>
-                          {l.name}
+                          {l.typeCode ? l.typeCode : l.name}
                         </div>
                         <div className="rd-kind" title={l.kind}>
                           {l.kind}

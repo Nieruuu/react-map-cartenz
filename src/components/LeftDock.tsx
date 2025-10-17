@@ -1559,6 +1559,7 @@ export default function LeftDock() {
 
   /* ---------- Load & Export UI ---------- */
   const [openLoad, setOpenLoad] = useState(false);
+  const [loadTab, setLoadTab] = useState<"local" | "api">("local");
   const [openExport, setOpenExport] = useState(false);
   const openExportModal = () => setOpenExport(true);
 
@@ -2202,10 +2203,23 @@ export default function LeftDock() {
               />
               <button
                 className="btn-tool"
-                onClick={() => setOpenLoad(true)}
+                onClick={() => {
+                  setLoadTab("local");
+                  setOpenLoad(true);
+                }}
                 title="Tampilkan dataset import ke peta"
               >
                 <span className="icon">layers</span> Load Peta (Imported)
+              </button>
+              <button
+                className="btn-tool"
+                onClick={() => {
+                  setLoadTab("api");
+                  setOpenLoad(true);
+                }}
+                title="Load data dari API SmartGov"
+              >
+                <span className="icon">cloud_download</span> Load (API)
               </button>
               <button
                 className="btn-tool"
@@ -2223,7 +2237,11 @@ export default function LeftDock() {
         </div>
       </div>
 
-      <LayerLoadModal open={openLoad} onClose={() => setOpenLoad(false)} />
+      <LayerLoadModal
+        open={openLoad}
+        initialTab={loadTab}
+        onClose={() => setOpenLoad(false)}
+      />
       <ExportModal
         open={openExport}
         onClose={() => setOpenExport(false)}

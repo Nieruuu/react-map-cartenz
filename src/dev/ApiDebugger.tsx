@@ -1,483 +1,892 @@
-// src/dev/ApiDebugger.tsx
-import React from "react";
-import { API_BASE_URL, DEFAULT_USER, DEFAULT_PASS } from "../lib/config";
+/**
+ * Comprehensive debugging tools for SmartGov API
+ * Proper error logging and token validation
+ */
+
+import { useState, useEffect } from "react";
+import { auth, type AuthState } from "../lib/api/auth";
+import { listSpatialGeneric } from "../lib/api/spatialGeneric";
 import {
-  postNoAuth,
-  getRaw,
-  getAccessToken,
-  setAccessToken,
-  getTokenType,
-  setTokenType,
-  clearAccessToken,
-} from "../lib/api/client";
+  transformSpatialRows,
+  validateTransformedFeatures,
+} from "../lib/api/transformers";
+import { convertWKTToFeature } from "../lib/geo/wktConverter";
+import { API_BASE } from "../lib/api/client";
 
-type Mode = "list" | "count" | "single";
-
-type LogRow = {
-  step: string;
-  url?: string;
-  status?: number;
-  body?: string;
-  err?: string;
-  at: string;
-};
-
-function now() {
-  return new Date().toLocaleTimeString();
-}
-function clip(x: any, n = 800) {
-  try {
-    const s = typeof x === "string" ? x : JSON.stringify(x);
-    return s.length > n ? s.slice(0, n) + "…" : s;
-  } catch {
-    return String(x).slice(0, n);
-  }
+interface DebugLog {
+  id: string;
+  timestamp: Date;
+  level: "info" | "warn" | "error" | "success";
+  message: string;
+  details?: any;
 }
 
-// Samakan skema jadi 'Bearer' biar konsisten
-function normalizeScheme(s: string | null | undefined): string {
-  if (!s) return "Bearer";
-  const k = s.toLowerCase();
-  if (k === "jws" || k === "jwt" || k === "bearer") return "Bearer";
-  return "Bearer";
-}
-
-// Build query list mentah (tanpa encode [])
-function buildListQuery(
-  page: number,
-  size: number,
-  includes: string[],
-  filters: string[]
-) {
-  const parts: string[] = [];
-  parts.push(`page[number]=${page}`);
-  if (size) parts.push(`page[size]=${size}`);
-  includes.forEach((v) => v && parts.push(`include[]=${v}`));
-  filters.forEach((f) => f && parts.push(`filter[]=${f}`));
-  return parts.join("&");
+interface TestResult {
+  name: string;
+  status: "pending" | "success" | "error";
+  message: string;
+  details?: any;
+  duration?: number;
 }
 
 export default function ApiDebugger() {
-  const [logs, setLogs] = React.useState<LogRow[]>([]);
-  const [busy, setBusy] = React.useState(false);
+  const [authState, setAuthState] = useState<AuthState | null>(null);
+  const [logs, setLogs] = useState<DebugLog[]>([]);
+  const [testResults, setTestResults] = useState<TestResult[]>([]);
+  const [isRunningTests, setIsRunningTests] = useState(false);
+  const [activeTab, setActiveTab] = useState<
+    "status" | "tests" | "logs" | "auth"
+  >("status");
 
-  // Auth form
-  const [user, setUser] = React.useState(DEFAULT_USER || "sa");
-  const [pass, setPass] = React.useState(DEFAULT_PASS || "");
+  // Add log entry
+  const addLog = (level: DebugLog["level"], message: string, details?: any) => {
+    const log: DebugLog = {
+      id: Math.random().toString(36).substr(2, 9),
+      timestamp: new Date(),
+      level,
+      message,
+      details,
+    };
+    setLogs((prev) => [log, ...prev].slice(0, 100)); // Keep last 100 logs
+  };
 
-  // Token state
-  const [token, setToken] = React.useState(getAccessToken() || "");
-  const [scheme, setScheme] = React.useState(normalizeScheme(getTokenType()));
+  // Update auth state and log changes
+  useEffect(() => {
+    const updateAuthState = () => {
+      const newAuthState = auth.getAuthState();
+      setAuthState(newAuthState);
 
-  // GET selector + params
-  const [mode, setMode] = React.useState<Mode>("list");
-  const [pageNumber, setPageNumber] = React.useState(1);
-  const [pageSize, setPageSize] = React.useState(10);
-  const [includes, setIncludes] = React.useState("attribute");
-  const [filters, setFilters] = React.useState(""); // newline: status|eq|1
-  const [singleId, setSingleId] = React.useState("220");
+      if (newAuthState.isAuthenticated) {
+        addLog("success", "Authentication state updated", {
+          tokenPresent: !!newAuthState.token,
+          tokenType: newAuthState.tokenType,
+          expiresAt: newAuthState.expiresAt
+            ? new Date(newAuthState.expiresAt).toISOString()
+            : null,
+        });
+      }
+    };
 
-  function push(row: Partial<LogRow>) {
-    setLogs((prev) =>
-      [
-        {
-          step: row.step || "",
-          url: row.url,
-          status: row.status,
-          body: row.body,
-          err: row.err,
-          at: now(),
-        },
-        ...prev,
-      ].slice(0, 140)
+    updateAuthState();
+
+    const interval = setInterval(updateAuthState, 5000); // Update every 5 seconds
+
+    return () => clearInterval(interval);
+  }, []);
+
+  // Run comprehensive API tests
+  const runTests = async () => {
+    setIsRunningTests(true);
+    setTestResults([]);
+
+    const tests: TestResult[] = [
+      {
+        name: "Authentication Check",
+        status: "pending",
+        message: "Checking authentication...",
+      },
+      {
+        name: "Token Validation",
+        status: "pending",
+        message: "Validating token...",
+      },
+      {
+        name: "API Connectivity",
+        status: "pending",
+        message: "Testing API connection...",
+      },
+      {
+        name: "Spatial Feature List",
+        status: "pending",
+        message: "Fetching spatial features...",
+      },
+      {
+        name: "Data Transformation",
+        status: "pending",
+        message: "Testing data transformation...",
+      },
+      {
+        name: "WKT Conversion",
+        status: "pending",
+        message: "Testing WKT conversion...",
+      },
+    ];
+
+    setTestResults(tests);
+
+    // Test 1: Authentication Check
+    try {
+      const startTime = Date.now();
+      const authStatus = auth.getAuthState();
+      const duration = Date.now() - startTime;
+
+      if (authStatus.isAuthenticated && authStatus.token) {
+        tests[0] = {
+          ...tests[0],
+          status: "success",
+          message: "Authentication successful",
+          details: {
+            tokenType: authStatus.tokenType,
+            tokenLength: authStatus.token.length,
+            expiresAt: authStatus.expiresAt,
+          },
+          duration,
+        };
+        addLog("success", "Authentication check passed", tests[0].details);
+      } else {
+        tests[0] = {
+          ...tests[0],
+          status: "error",
+          message: "Not authenticated",
+          details: authStatus,
+          duration,
+        };
+        addLog("error", "Authentication check failed", tests[0].details);
+      }
+    } catch (error) {
+      tests[0] = {
+        ...tests[0],
+        status: "error",
+        message: `Authentication check failed: ${error}`,
+        details: error,
+      };
+      addLog("error", "Authentication check error", error);
+    }
+
+    setTestResults([...tests]);
+
+    // Test 2: Token Validation
+    if (tests[0].status === "success") {
+      try {
+        const startTime = Date.now();
+        const isValid = !!auth.getToken();
+        const duration = Date.now() - startTime;
+
+        if (isValid) {
+          tests[1] = {
+            ...tests[1],
+            status: "success",
+            message: "Token is valid",
+            duration,
+          };
+          addLog("success", "Token validation passed");
+        } else {
+          tests[1] = {
+            ...tests[1],
+            status: "error",
+            message: "Token validation failed",
+            duration,
+          };
+          addLog("error", "Token validation failed");
+        }
+      } catch (error) {
+        tests[1] = {
+          ...tests[1],
+          status: "error",
+          message: `Token validation error: ${error}`,
+          details: error,
+        };
+        addLog("error", "Token validation error", error);
+      }
+    } else {
+      tests[1] = {
+        ...tests[1],
+        status: "error",
+        message: "Skipped - authentication required",
+      };
+    }
+
+    setTestResults([...tests]);
+
+    // Test 3: API Connectivity
+    if (tests[0].status === "success") {
+      try {
+        const startTime = Date.now();
+        const response = await fetch(
+          `${API_BASE}/spatial-feature?page[number]=1&page[size]=1`,
+          {
+            headers: auth.getAuthHeader(),
+          }
+        );
+        const duration = Date.now() - startTime;
+
+        if (response.ok) {
+          tests[2] = {
+            ...tests[2],
+            status: "success",
+            message: `API connection successful (${response.status})`,
+            details: {
+              status: response.status,
+              statusText: response.statusText,
+              headers: Object.fromEntries(response.headers.entries()),
+            },
+            duration,
+          };
+          addLog("success", "API connectivity test passed", tests[2].details);
+        } else {
+          tests[2] = {
+            ...tests[2],
+            status: "error",
+            message: `API connection failed (${response.status})`,
+            details: {
+              status: response.status,
+              statusText: response.statusText,
+            },
+            duration,
+          };
+          addLog("error", "API connectivity test failed", tests[2].details);
+        }
+      } catch (error) {
+        tests[2] = {
+          ...tests[2],
+          status: "error",
+          message: `API connectivity error: ${error}`,
+          details: error,
+        };
+        addLog("error", "API connectivity error", error);
+      }
+    } else {
+      tests[2] = {
+        ...tests[2],
+        status: "error",
+        message: "Skipped - authentication required",
+      };
+    }
+
+    setTestResults([...tests]);
+
+    // Test 4: Spatial Feature List
+    if (tests[2].status === "success") {
+      try {
+        const startTime = Date.now();
+        const response = await listSpatialGeneric({
+          pageNumber: 1,
+          pageSize: 5,
+          include: ["attribute"],
+        });
+        const duration = Date.now() - startTime;
+
+        tests[3] = {
+          ...tests[3],
+          status: "success",
+          message: `Loaded ${response.data.length} features`,
+          details: {
+            total: response.total,
+            pageNumber: response.pageNumber,
+            pageSize: response.pageSize,
+            dataCount: response.data.length,
+          },
+          duration,
+        };
+        addLog("success", "Spatial feature list test passed", tests[3].details);
+      } catch (error) {
+        tests[3] = {
+          ...tests[3],
+          status: "error",
+          message: `Spatial feature list failed: ${error}`,
+          details: error,
+        };
+        addLog("error", "Spatial feature list error", error);
+      }
+    } else {
+      tests[3] = {
+        ...tests[3],
+        status: "error",
+        message: "Skipped - previous tests failed",
+      };
+    }
+
+    setTestResults([...tests]);
+
+    // Test 5: Data Transformation
+    if (tests[3].status === "success" && tests[3].details?.dataCount > 0) {
+      try {
+        const startTime = Date.now();
+        const mockData = {
+          id: 1,
+          value: "test-uuid",
+          attribute: [
+            {
+              attributeKey: "spatialFeature.refWilayah",
+              attributeValue: "Test Feature",
+            },
+            {
+              attributeKey: "spatialFeature.geometry",
+              attributeValue: "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))",
+            },
+            { attributeKey: "spatialFeature.type", attributeValue: "20000001" },
+          ],
+        } as any;
+
+        const transformed = transformSpatialRows([mockData]);
+        const validation = validateTransformedFeatures(transformed);
+        const duration = Date.now() - startTime;
+
+        if (validation.valid.length > 0) {
+          tests[4] = {
+            ...tests[4],
+            status: "success",
+            message: `Transformed ${validation.valid.length} features`,
+            details: {
+              valid: validation.valid.length,
+              invalid: validation.invalid.length,
+              sampleFeature: validation.valid[0],
+            },
+            duration,
+          };
+          addLog(
+            "success",
+            "Data transformation test passed",
+            tests[4].details
+          );
+        } else {
+          tests[4] = {
+            ...tests[4],
+            status: "error",
+            message: "No valid features after transformation",
+            details: validation,
+          };
+          addLog("error", "Data transformation failed", validation);
+        }
+      } catch (error) {
+        tests[4] = {
+          ...tests[4],
+          status: "error",
+          message: `Data transformation error: ${error}`,
+          details: error,
+        };
+        addLog("error", "Data transformation error", error);
+      }
+    } else {
+      tests[4] = {
+        ...tests[4],
+        status: "error",
+        message: "Skipped - no test data available",
+      };
+    }
+
+    setTestResults([...tests]);
+
+    // Test 6: WKT Conversion
+    try {
+      const startTime = Date.now();
+      const testWKT =
+        "POLYGON((107.0 -7.0, 108.0 -7.0, 108.0 -6.0, 107.0 -6.0, 107.0 -7.0))";
+      const result = convertWKTToFeature(testWKT, { name: "Test Feature" });
+      const duration = Date.now() - startTime;
+
+      if (result.success && result.feature) {
+        tests[5] = {
+          ...tests[5],
+          status: "success",
+          message: "WKT conversion successful",
+          details: {
+            geometryType: result.geometryType,
+            warnings: result.warnings,
+            errors: result.errors,
+          },
+          duration,
+        };
+        addLog("success", "WKT conversion test passed", tests[5].details);
+      } else {
+        tests[5] = {
+          ...tests[5],
+          status: "error",
+          message: "WKT conversion failed",
+          details: {
+            errors: result.errors,
+            warnings: result.warnings,
+          },
+        };
+        addLog("error", "WKT conversion failed", result.errors);
+      }
+    } catch (error) {
+      tests[5] = {
+        ...tests[5],
+        status: "error",
+        message: `WKT conversion error: ${error}`,
+        details: error,
+      };
+      addLog("error", "WKT conversion error", error);
+    }
+
+    setTestResults(tests);
+    setIsRunningTests(false);
+
+    const successCount = tests.filter((t) => t.status === "success").length;
+    const totalCount = tests.length;
+    addLog(
+      "info",
+      `Test suite completed: ${successCount}/${totalCount} tests passed`
     );
-  }
+  };
 
-  // AUTH (tanpa Authorization header)
-  async function doAuth() {
+  // Login function
+  const handleLogin = async () => {
     try {
-      setBusy(true);
-      const { data, __meta } = await postNoAuth<{
-        data: { tokenType: string; accessToken: string; expireAt: number };
-      }>(
-        "/auth/request-token",
-        { userIdentifier: user, password: pass },
-        undefined,
-        { Accept: "*/*", "Content-Type": "application/json" }
-      );
-      const t = data.data?.accessToken || "";
-      const ty = normalizeScheme(data.data?.tokenType);
-      setToken(t);
-      setAccessToken(t);
-      setScheme(ty);
-      setTokenType(ty); // simpan 'Bearer', bukan 'jws'
-      push({
-        step: "AUTH /auth/request-token",
-        url: __meta.url,
-        status: __meta.status,
-        body: clip(data),
-      });
-    } catch (e: any) {
-      push({ step: "AUTH /auth/request-token", err: e?.message || String(e) });
-    } finally {
-      setBusy(false);
+      addLog("info", "Attempting login...");
+      await auth.login({ userIdentifier: "sa", password: "pass@word1" });
+      setAuthState(auth.getAuthState());
+      addLog("success", "Login successful");
+    } catch (error) {
+      addLog("error", "Login failed", error);
     }
-  }
+  };
 
-  function clearTok() {
-    clearAccessToken();
-    setToken("");
-    setScheme("Bearer");
-    push({ step: "CLEAR TOKEN", body: "local token cleared" });
-  }
-
-  // Path per mode
-  function buildPathFor(m: Mode): string {
-    if (m === "count") return "/spatial-feature/count";
-    if (m === "single")
-      return `/spatial-feature/${singleId}?include[]=attribute`;
-    const inc = includes
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const fil = filters
-      .split("\n")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const q = buildListQuery(pageNumber, pageSize, inc, fil);
-    return `/spatial-feature?${q}`;
-  }
-
-  // GET (mode eksplisit biar nggak kejebak race setState)
-  async function doGet(m?: Mode) {
-    const modeToUse = m ?? mode;
-    const path = buildPathFor(modeToUse);
+  // Logout function
+  const handleLogout = async () => {
     try {
-      setBusy(true);
-      const { data, __meta } = await getRaw<any>(path);
-      push({
-        step: `GET ${modeToUse}`,
-        url: __meta.url,
-        status: __meta.status,
-        body: clip(data),
-      });
-    } catch (e: any) {
-      push({
-        step: `GET ${modeToUse}`,
-        url: e?.url,
-        err: e?.message || String(e),
-      });
-    } finally {
-      setBusy(false);
+      addLog("info", "Attempting logout...");
+      await auth.logout();
+      setAuthState(null);
+      addLog("success", "Logout successful");
+    } catch (error) {
+      addLog("error", "Logout failed", error);
     }
-  }
+  };
 
-  async function doAuto() {
-    try {
-      setBusy(true);
-      await doAuth();
-      await new Promise((r) => setTimeout(r, 50));
-      await doGet("list");
-      await doGet("count");
-      await doGet("single");
-    } finally {
-      setBusy(false);
+  // Clear logs
+  const clearLogs = () => {
+    setLogs([]);
+  };
+
+  // Get log level color
+  const getLogLevelColor = (level: DebugLog["level"]) => {
+    switch (level) {
+      case "success":
+        return "#059669";
+      case "error":
+        return "#dc2626";
+      case "warn":
+        return "#d97706";
+      case "info":
+        return "#2563eb";
+      default:
+        return "#6b7280";
     }
-  }
+  };
 
-  const tokenPreview = token
-    ? `${scheme} ${token.slice(0, 16)}…${token.slice(-6)}`
-    : "(no token)";
+  // Get test status color
+  const getTestStatusColor = (status: TestResult["status"]) => {
+    switch (status) {
+      case "success":
+        return "#059669";
+      case "error":
+        return "#dc2626";
+      case "pending":
+        return "#6b7280";
+      default:
+        return "#6b7280";
+    }
+  };
 
   return (
-    <div
-      style={{
-        background: "#101114",
-        color: "#e7e7e7",
-        border: "1px solid #2a2b2f",
-        borderRadius: 10,
-        padding: 12,
-        width: 460,
-        fontSize: 13,
-      }}
-    >
-      <div style={{ fontWeight: 700, marginBottom: 8 }}>API Debugger</div>
-      <div
-        style={{ color: "#a6a8ad", marginBottom: 8, fontFamily: "monospace" }}
-      >
-        BASE {API_BASE_URL}
+    <div style={{ padding: 16, maxWidth: 1200, margin: "0 auto" }}>
+      <div style={{ marginBottom: 24 }}>
+        <h2 style={{ margin: 0, marginBottom: 8 }}>API Debugger</h2>
+        <p style={{ margin: 0, color: "#6b7280", fontSize: 14 }}>
+          Comprehensive debugging tools for SmartGov API integration
+        </p>
       </div>
 
-      <div style={{ marginBottom: 10 }}>
-        <div style={{ fontWeight: 600, marginBottom: 6 }}>Auth</div>
-        <div
-          style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: 6 }}
-        >
-          <label>user</label>
-          <input
-            value={user}
-            onChange={(e) => setUser(e.target.value)}
-            style={{
-              padding: 6,
-              borderRadius: 6,
-              border: "1px solid #333",
-              background: "#15161a",
-              color: "#e7e7e7",
-            }}
-          />
-          <label>password</label>
-          <input
-            type="password"
-            value={pass}
-            onChange={(e) => setPass(e.target.value)}
-            style={{
-              padding: 6,
-              borderRadius: 6,
-              border: "1px solid #333",
-              background: "#15161a",
-              color: "#e7e7e7",
-            }}
-          />
-        </div>
-        <div
-          style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}
-        >
-          <button
-            onClick={doAuth}
-            disabled={busy}
-            style={{
-              padding: "6px 10px",
-              borderRadius: 6,
-              border: "1px solid #4b4d55",
-              background: "#1a1b20",
-              color: "#e7e7e7",
-            }}
-          >
-            Request Token
-          </button>
-          <button
-            onClick={clearTok}
-            disabled={busy}
-            style={{
-              padding: "6px 10px",
-              borderRadius: 6,
-              border: "1px solid #804",
-              background: "#2a0f12",
-              color: "#ffb3b3",
-            }}
-          >
-            Clear Token
-          </button>
-        </div>
-        <div
-          style={{ marginTop: 6, fontFamily: "monospace", color: "#9bd97f" }}
-        >
-          token in use: {tokenPreview}
-        </div>
-      </div>
-
-      <div style={{ marginBottom: 10 }}>
-        <div style={{ fontWeight: 600, marginBottom: 6 }}>GET options</div>
-        <div style={{ display: "flex", gap: 12, marginBottom: 8 }}>
-          <label>
-            <input
-              type="radio"
-              checked={mode === "list"}
-              onChange={() => setMode("list")}
-            />{" "}
-            list
-          </label>
-          <label>
-            <input
-              type="radio"
-              checked={mode === "count"}
-              onChange={() => setMode("count")}
-            />{" "}
-            count
-          </label>
-          <label>
-            <input
-              type="radio"
-              checked={mode === "single"}
-              onChange={() => setMode("single")}
-            />{" "}
-            single by id
-          </label>
-        </div>
-
-        {mode === "list" && (
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "110px 1fr",
-              gap: 6,
-            }}
-          >
-            <label>page[number]</label>
-            <input
-              type="number"
-              min={1}
-              value={pageNumber}
-              onChange={(e) =>
-                setPageNumber(parseInt(e.target.value || "1", 10))
-              }
-              style={{
-                padding: 6,
-                borderRadius: 6,
-                border: "1px solid #333",
-                background: "#15161a",
-                color: "#e7e7e7",
-              }}
-            />
-            <label>page[size]</label>
-            <input
-              type="number"
-              min={1}
-              value={pageSize}
-              onChange={(e) =>
-                setPageSize(parseInt(e.target.value || "10", 10))
-              }
-              style={{
-                padding: 6,
-                borderRadius: 6,
-                border: "1px solid #333",
-                background: "#15161a",
-                color: "#e7e7e7",
-              }}
-            />
-            <label>include[]</label>
-            <input
-              placeholder="attribute, foo"
-              value={includes}
-              onChange={(e) => setIncludes(e.target.value)}
-              style={{
-                padding: 6,
-                borderRadius: 6,
-                border: "1px solid #333",
-                background: "#15161a",
-                color: "#e7e7e7",
-              }}
-            />
-            <label>filter[]</label>
-            <textarea
-              placeholder={
-                "status|eq|1\nattributes.attributeKeyValue|eq|kodeProvinsi$$51"
-              }
-              value={filters}
-              onChange={(e) => setFilters(e.target.value)}
-              rows={3}
-              style={{
-                padding: 6,
-                borderRadius: 6,
-                border: "1px solid #333",
-                background: "#15161a",
-                color: "#e7e7e7",
-              }}
-            />
-          </div>
-        )}
-
-        {mode === "single" && (
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "110px 1fr",
-              gap: 6,
-            }}
-          >
-            <label>id</label>
-            <input
-              value={singleId}
-              onChange={(e) => setSingleId(e.target.value)}
-              style={{
-                padding: 6,
-                borderRadius: 6,
-                border: "1px solid #333",
-                background: "#15161a",
-                color: "#e7e7e7",
-              }}
-            />
-          </div>
-        )}
-
-        <div
-          style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}
-        >
-          <button
-            onClick={() => doGet()}
-            disabled={busy}
-            style={{
-              padding: "6px 10px",
-              borderRadius: 6,
-              border: "1px solid #4b4d55",
-              background: "#1a1b20",
-              color: "#e7e7e7",
-            }}
-          >
-            GET Now
-          </button>
-          <button
-            onClick={() => doAuto()}
-            disabled={busy}
-            style={{
-              padding: "6px 10px",
-              borderRadius: 6,
-              border: "1px solid #4b4d55",
-              background: "#10251a",
-              color: "#b9fcb0",
-            }}
-          >
-            Auto Test (AUTH→LIST→COUNT→ONE)
-          </button>
-        </div>
-
-        <div
-          style={{ marginTop: 6, fontFamily: "monospace", color: "#a6a8ad" }}
-        >
-          Preview URL: {API_BASE_URL}
-          {buildPathFor(mode)}
-        </div>
-      </div>
-
+      {/* Tab Navigation */}
       <div
         style={{
-          marginTop: 10,
-          borderTop: "1px solid #2a2b2f",
-          paddingTop: 8,
-          maxHeight: 260,
-          overflow: "auto",
-          fontFamily: "monospace",
+          display: "flex",
+          gap: 8,
+          marginBottom: 24,
+          borderBottom: "1px solid #e5e7eb",
         }}
       >
-        {logs.map((l, i) => (
-          <div
-            key={i}
-            style={{ padding: "6px 0", borderBottom: "1px dashed #2a2b2f" }}
+        {[
+          { key: "status", label: "Status" },
+          { key: "tests", label: "Tests" },
+          { key: "logs", label: "Logs" },
+          { key: "auth", label: "Authentication" },
+        ].map((tab) => (
+          <button
+            key={tab.key}
+            className={`btn ${activeTab === tab.key ? "primary" : "ghost"}`}
+            onClick={() => setActiveTab(tab.key as any)}
+            style={{
+              borderBottom:
+                activeTab === tab.key ? "2px solid #3b82f6" : "none",
+              borderRadius: activeTab === tab.key ? "8px 8px 0 0" : "0",
+            }}
           >
-            <div>
-              <b>{l.at}</b> — {l.step}
-            </div>
-            {l.url && <div style={{ color: "#8fb4ff" }}>{l.url}</div>}
-            {typeof l.status === "number" && (
-              <div
-                style={{
-                  color:
-                    l.status >= 200 && l.status < 300 ? "#9bd97f" : "#ff9f9f",
-                }}
-              >
-                status {l.status}
-              </div>
-            )}
-            {l.err ? (
-              <div style={{ whiteSpace: "pre-wrap", color: "#ff9f9f" }}>
-                {l.err}
-              </div>
-            ) : l.body ? (
-              <pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>{l.body}</pre>
-            ) : null}
-          </div>
+            {tab.label}
+          </button>
         ))}
       </div>
+
+      {/* Status Tab */}
+      {activeTab === "status" && (
+        <div>
+          <div style={{ marginBottom: 24 }}>
+            <h3 style={{ margin: "0 0 12px 0" }}>System Status</h3>
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
+                gap: 16,
+              }}
+            >
+              {/* Authentication Status */}
+              <div
+                style={{
+                  padding: 16,
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 8,
+                  backgroundColor: authState?.isAuthenticated
+                    ? "#f0fdf4"
+                    : "#fef2f2",
+                }}
+              >
+                <h4 style={{ margin: "0 0 8px 0" }}>Authentication</h4>
+                <div style={{ fontSize: 14 }}>
+                  <div>
+                    Status:{" "}
+                    {authState?.isAuthenticated
+                      ? "✓ Authenticated"
+                      : "✗ Not authenticated"}
+                  </div>
+                  {authState?.token && (
+                    <div>Token: {authState.token.substring(0, 20)}...</div>
+                  )}
+                  {authState?.expiresAt && (
+                    <div>
+                      Expires: {new Date(authState.expiresAt).toLocaleString()}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* API Status */}
+              <div
+                style={{
+                  padding: 16,
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 8,
+                  backgroundColor: "#f9fafb",
+                }}
+              >
+                <h4 style={{ margin: "0 0 8px 0" }}>API Configuration</h4>
+                <div style={{ fontSize: 14 }}>
+                  <div>Base URL: {API_BASE}</div>
+                  <div>
+                    Environment:{" "}
+                    {import.meta.env.DEV ? "Development" : "Production"}
+                  </div>
+                  <div>
+                    Proxy: {import.meta.env.DEV ? "Enabled" : "Disabled"}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 12 }}>
+            <button
+              className="btn primary"
+              onClick={runTests}
+              disabled={isRunningTests}
+            >
+              {isRunningTests ? "Running Tests..." : "Run Tests"}
+            </button>
+            <button className="btn ghost" onClick={clearLogs}>
+              Clear Logs
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Tests Tab */}
+      {activeTab === "tests" && (
+        <div>
+          <div style={{ marginBottom: 16 }}>
+            <h3 style={{ margin: "0 0 12px 0" }}>Test Results</h3>
+
+            {testResults.length === 0 ? (
+              <div
+                style={{
+                  padding: 24,
+                  textAlign: "center",
+                  color: "#6b7280",
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 8,
+                }}
+              >
+                No tests run yet. Click "Run Tests" to start.
+              </div>
+            ) : (
+              <div
+                style={{ display: "flex", flexDirection: "column", gap: 12 }}
+              >
+                {testResults.map((test, index) => (
+                  <div
+                    key={index}
+                    style={{
+                      padding: 16,
+                      border: "1px solid #e5e7eb",
+                      borderRadius: 8,
+                      backgroundColor:
+                        test.status === "success"
+                          ? "#f0fdf4"
+                          : test.status === "error"
+                          ? "#fef2f2"
+                          : "#f9fafb",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        marginBottom: 8,
+                      }}
+                    >
+                      <div style={{ fontWeight: "bold" }}>{test.name}</div>
+                      <div
+                        style={{
+                          color: getTestStatusColor(test.status),
+                          fontSize: 12,
+                        }}
+                      >
+                        {test.status.toUpperCase()}
+                        {test.duration && ` (${test.duration}ms)`}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 14, marginBottom: 8 }}>
+                      {test.message}
+                    </div>
+                    {test.details && (
+                      <details>
+                        <summary
+                          style={{
+                            cursor: "pointer",
+                            fontSize: 12,
+                            color: "#6b7280",
+                          }}
+                        >
+                          Show Details
+                        </summary>
+                        <pre
+                          style={{
+                            fontSize: 11,
+                            marginTop: 8,
+                            padding: 8,
+                            backgroundColor: "#f3f4f6",
+                            borderRadius: 4,
+                            overflow: "auto",
+                          }}
+                        >
+                          {JSON.stringify(test.details, null, 2)}
+                        </pre>
+                      </details>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <button
+            className="btn primary"
+            onClick={runTests}
+            disabled={isRunningTests}
+          >
+            {isRunningTests ? "Running Tests..." : "Run Tests"}
+          </button>
+        </div>
+      )}
+
+      {/* Logs Tab */}
+      {activeTab === "logs" && (
+        <div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: 16,
+            }}
+          >
+            <h3 style={{ margin: 0 }}>Debug Logs</h3>
+            <button className="btn ghost" onClick={clearLogs}>
+              Clear Logs
+            </button>
+          </div>
+
+          {logs.length === 0 ? (
+            <div
+              style={{
+                padding: 24,
+                textAlign: "center",
+                color: "#6b7280",
+                border: "1px solid #e5e7eb",
+                borderRadius: 8,
+              }}
+            >
+              No logs yet. Run tests or perform actions to generate logs.
+            </div>
+          ) : (
+            <div
+              style={{
+                maxHeight: 500,
+                overflow: "auto",
+                border: "1px solid #e5e7eb",
+                borderRadius: 8,
+              }}
+            >
+              {logs.map((log) => (
+                <div
+                  key={log.id}
+                  style={{
+                    padding: 12,
+                    borderBottom: "1px solid #f3f4f6",
+                    borderLeft: `4px solid ${getLogLevelColor(log.level)}`,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      marginBottom: 4,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontWeight: "bold",
+                        color: getLogLevelColor(log.level),
+                        fontSize: 12,
+                      }}
+                    >
+                      {log.level.toUpperCase()}
+                    </div>
+                    <div style={{ fontSize: 12, color: "#6b7280" }}>
+                      {log.timestamp.toLocaleTimeString()}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 14, marginBottom: 4 }}>
+                    {log.message}
+                  </div>
+                  {log.details && (
+                    <details>
+                      <summary
+                        style={{
+                          cursor: "pointer",
+                          fontSize: 12,
+                          color: "#6b7280",
+                        }}
+                      >
+                        Show Details
+                      </summary>
+                      <pre
+                        style={{
+                          fontSize: 11,
+                          marginTop: 8,
+                          padding: 8,
+                          backgroundColor: "#f3f4f6",
+                          borderRadius: 4,
+                          overflow: "auto",
+                        }}
+                      >
+                        {JSON.stringify(log.details, null, 2)}
+                      </pre>
+                    </details>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Authentication Tab */}
+      {activeTab === "auth" && (
+        <div>
+          <div style={{ marginBottom: 24 }}>
+            <h3 style={{ margin: "0 0 12px 0" }}>Authentication Management</h3>
+
+            <div
+              style={{
+                padding: 16,
+                border: "1px solid #e5e7eb",
+                borderRadius: 8,
+                backgroundColor: "#f9fafb",
+              }}
+            >
+              <div style={{ marginBottom: 16 }}>
+                <h4 style={{ margin: "0 0 8px 0" }}>Current Status</h4>
+                <div style={{ fontSize: 14 }}>
+                  <div>
+                    Authenticated: {authState?.isAuthenticated ? "Yes" : "No"}
+                  </div>
+                  {authState?.token && (
+                    <>
+                      <div>Token Type: {authState.tokenType}</div>
+                      <div>
+                        Token Length: {authState.token.length} characters
+                      </div>
+                      {authState.expiresAt && (
+                        <div>
+                          Expires At:{" "}
+                          {new Date(authState.expiresAt).toLocaleString()}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: 12 }}>
+                <button
+                  className={
+                    authState?.isAuthenticated ? "btn ghost" : "btn primary"
+                  }
+                  onClick={
+                    authState?.isAuthenticated ? handleLogout : handleLogin
+                  }
+                >
+                  {authState?.isAuthenticated ? "Logout" : "Login"}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Token Information */}
+          {authState?.token && (
+            <div
+              style={{
+                padding: 16,
+                border: "1px solid #e5e7eb",
+                borderRadius: 8,
+                backgroundColor: "#f9fafb",
+              }}
+            >
+              <h4 style={{ margin: "0 0 8px 0" }}>Token Information</h4>
+              <div style={{ fontSize: 14 }}>
+                <div>Full Token:</div>
+                <div
+                  style={{
+                    padding: 8,
+                    backgroundColor: "#f3f4f6",
+                    borderRadius: 4,
+                    fontFamily: "monospace",
+                    fontSize: 12,
+                    wordBreak: "break-all",
+                    marginTop: 4,
+                  }}
+                >
+                  {authState.token}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

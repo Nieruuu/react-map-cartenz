@@ -68,7 +68,7 @@ export default function FocusCard() {
 
     setRows([]);
     initialKeysRef.current = new Set();
-    openIdRef.current = focus.id || null;
+    openIdRef.current = (focus as any)?.id || null;
     openLayerIdRef.current = (focus as any).layerId || null;
     setOpenModal(true);
     setLoadingProps(true);
@@ -89,11 +89,11 @@ export default function FocusCard() {
       const kodeAwal =
         p[pair.codeKey] != null && String(p[pair.codeKey]) !== ""
           ? String(p[pair.codeKey])
-          : String(focus.id || "");
+          : String((focus as any)?.id || "");
       const namaAwal =
         p[pair.nameKey] != null && String(p[pair.nameKey]) !== ""
           ? String(p[pair.nameKey])
-          : String(focus.name || "");
+          : String((focus as any)?.name || "");
 
       setTempId(kodeAwal);
       setTempName(namaAwal);
@@ -147,7 +147,7 @@ export default function FocusCard() {
     });
     window.dispatchEvent(
       new CustomEvent("request-feature-props", {
-        detail: { id: focus.id, layerId: (focus as any).layerId },
+        detail: { id: (focus as any)?.id, layerId: (focus as any).layerId },
       })
     );
 
