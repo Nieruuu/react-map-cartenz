@@ -15,47 +15,47 @@ tax-map-react/
 │   ├── components/              # React components
 │   │   ├── ApiLoadPanel.tsx     # API data loading panel with filtering
 │   │   ├── ExportModal.tsx      # Data export interface
-│   │   ├── FocusCard.tsx        # Feature focus display
+│   │   ├── FocusCard.tsx        # Feature focus display with metadata editing
 │   │   ├── FooterBars.tsx       # Bottom UI bar
-│   │   ├── LayerLoadModal.tsx   # Layer loading interface
+│   │   ├── LayerLoadModal.tsx   # Enhanced layer loading interface
 │   │   ├── LeftDock.tsx         # Left side panel
 │   │   ├── RightDock.tsx        # Right side panel
 │   │   ├── TaxMap.tsx           # Main map component
 │   │   ├── Topbar.tsx           # Top navigation bar
 │   │   └── api/                 # API-specific components
 │   │       └── SmartGovLoader.tsx # Streamlined API loader UI
-│   
+  
 │   ├── dev/                     # Development-only components
 │   │   └── ApiDebugger.tsx      # Comprehensive API debugging tool
-│   
+  
 │   ├── features/                # Feature modules
 │   │   └── loadFromApi.ts       # API layer loading logic
-│   
+  
 │   ├── hooks/                   # Custom React hooks
 │   │   ├── useLayersStore.ts    # Layer management state
 │   │   └── useMapStore.ts       # Map state management
-│   
+  
 │   ├── lib/                     # Core utilities and API
 │   │   ├── api/                 # API layer
-│   │   │   ├── auth.ts          # Authentication management
+│   │   │   ├── auth.ts          # Authentication management with WIB timezone
 │   │   │   ├── client.ts        # HTTP client with robust URL handling
 │   │   │   ├── qs.ts            # JSON:API query builder
 │   │   │   ├── spatialFeature.ts # Spatial Feature API with pagination
 │   │   │   ├── spatialGeneric.ts # Generic spatial data API
 │   │   │   └── transformers.ts  # Data transformation utilities
 │   │   ├── geo/                 # Geospatial utilities
-│   │   │   └── wktConverter.ts  # WKT to OpenLayers feature conversion
+│   │   │   └── simpleWKTConverter.ts # Simplified WKT to OpenLayers conversion
 │   │   └── config.ts            # Configuration constants
-│   
+  
 │   ├── styles/                  # CSS styles
 │   │   └── ui.css
-│   
+  
 │   ├── types/                   # TypeScript type definitions
 │   │   └── shp-write.d.ts       # Shapefile writing types
-│   
+  
 │   ├── assets/                  # Static assets
 │   │   └── react.svg
-│   
+  
 │   ├── App.tsx                  # Root application component
 │   ├── main.tsx                 # Application entry point
 │   └── vite-env.d.ts            # Vite environment types
@@ -63,19 +63,24 @@ tax-map-react/
 ├── tmp_zip/                     # Temporary zip extraction folder
 │   └── layers/
 
+├── .env                         # Environment variables configuration
 ├── index.html                   # HTML template
 ├── package.json                 # Dependencies and scripts
 ├── tsconfig.json                # TypeScript configuration
 ├── tsconfig.app.json            # App-specific TypeScript config
 ├── tsconfig.node.json           # Node-specific TypeScript config
-├── vite.config.ts               # Vite build configuration
+├── vite.config.ts               # Vite build configuration with environment support
 ├── eslint.config.js             # ESLint configuration
 ├── .gitignore                   # Git ignore rules
 ├── structure.txt                # Project structure notes
 ├── PROJECT_CONTEXT.md           # Project context documentation
 ├── PROJECT_STRUCTURE.md         # This documentation file
 ├── API_DEBUGGING_GUIDE.md       # API debugging guide
-└── API_IMPLEMENTATION_GUIDE.md  # API implementation guide
+├── API_IMPLEMENTATION_GUIDE.md  # API implementation guide
+├── SPATIAL_FEATURE_API_IMPLEMENTATION.md # Spatial feature API docs
+├── LAYER_LOAD_MODAL_ENHANCEMENT.md # Layer loading enhancements
+├── LAYER_LOAD_MODAL_FIXES.md # Layer loading fixes
+└── WKT_CONVERTER_ANALYSIS.md # WKT converter analysis
 ```
 
 ## API Layer Architecture
@@ -97,13 +102,15 @@ tax-map-react/
 │  └─────────────┘    └─────────────┘    └─────────────┘     │
 │                                                             │
 │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐     │
-│  │   auth.ts   │    │transformers │    │wktConverter │     │
-│  │             │    │    .ts      │    │    .ts      │     │
-│  │ • login()   │    │ • feature   │    │ • WKT parse │     │
-│  │ • logout()  │    │   transform │    │ • geometry  │     │
-│  │ • token     │    │ • attribute │    │   handling  │     │
-│  │   management│    │   extraction│    │ • feature   │     │
-│  │ • refresh   │    │ • validation│    │   creation  │     │
+│  │   auth.ts   │    │transformers │    │simpleWKTConv│     │
+│  │             │    │    .ts      │    │    erter.ts  │     │
+│  │ • login()   │    │ • feature   │    │ • Direct    │     │
+│  │ • logout()  │    │   transform │    │   WKT parse │     │
+│  │ • token     │    │ • attribute │    │ • Geometry  │     │
+│  │   management│    │   extraction│    │   handling  │     │
+│  │ • refresh   │    │ • validation│    │ • Feature   │     │
+│  │ • WIB       │    │ • QGIS      │    │   creation  │     │
+│  │   timezone  │    │   export    │    │             │     │
 │  └─────────────┘    └─────────────┘    └─────────────┘     │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
@@ -128,15 +135,15 @@ App.tsx
     │
     ├── Modal Components
     │   ├── ExportModal.tsx
-    │   ├── LayerLoadModal.tsx
-    │   └── FocusCard.tsx
+    │   ├── LayerLoadModal.tsx (Enhanced with hierarchical grouping)
+    │   └── FocusCard.tsx (With metadata editing)
     │
     ├── API Components
     │   ├── ApiLoadPanel.tsx
-    │   └── api/SmartGovLoader.tsx
+    │   └── api/SmartGovLoader.tsx (Simplified interface)
     │
     └── Dev Components (DEV only)
-        └── ApiDebugger.tsx
+        └── ApiDebugger.tsx (Enhanced debugging)
 ```
 
 ## Data Flow
@@ -148,28 +155,31 @@ User Interaction
 Component Event (TaxMap.tsx/SmartGovLoader.tsx)
        │
        ▼
+Authentication Check (auth.ts)
+       │
+       ▼
 API Call (client.ts)
        │
        ▼
 Query Builder (qs.ts)
        │
        ▼
-HTTP Request with JSON:API params
+HTTP Request with JSON:API params + Bearer Token
        │
        ▼
-Backend Response
+Backend Response (SmartGov Framework)
        │
        ▼
 Data Transformation (transformers.ts)
        │
        ▼
-WKT Conversion (wktConverter.ts)
+WKT Conversion (simpleWKTConverter.ts)
        │
        ▼
 State Update (useMapStore/useLayersStore)
        │
        ▼
-UI Re-render (OpenLayers)
+UI Re-render (OpenLayers + React)
 ```
 
 ## JSON:API Implementation Details
@@ -182,36 +192,27 @@ The implementation supports standardized JSON:API parameters:
 - `include[]`: Related resources to include (default: ['attribute'])
 - `filter[]`: Filtering conditions (e.g., ['status|eq|1', 'spatialFeature.type|eq|20000001'])
 
-### Spatial Data Types
-The application supports various spatial feature types identified by type codes:
-- **20000001**: Administrative Boundaries
-- **20000002**: Land Use
-- **20000003**: Buildings
-- **20000004**: Roads
-- **20000005**: Water Bodies
-- **20000006**: Vegetation
-- **20000007**: Points of Interest
 
 ### Data Transformation Flow
 ```typescript
-SpatialRow (API Response)
+SpatialFeature (API Response)
     │
     ▼
-transformSpatialRows() → TransformedFeature[]
+transformSpatialFeatures() → TransformedFeature[]
     │
     ▼
-extractAttribute() → Extract geometry, name, type
+extractAttribute() → Extract geometry, name, type, refWilayah
     │
     ▼
-wktToFeature() → OpenLayers Feature
+simpleWKTConverter.wktToFeature() → OpenLayers Feature
     │
     ▼
-addApiLayer() → Vector Layer on Map
+addApiLayer() → Vector Layer on Map (with QGIS-compatible properties)
 ```
 
 ### Type Safety
 - `SpatialAttribute`: Attribute type definition
-- `SpatialRow`: Feature type definition
+- `SpatialFeature`: Feature type definition with attribute array
 - `SpatialListResponse`: Paginated response type
 - `ListGenericParams`: Query parameters type
 - `TransformedFeature`: Normalized feature type
@@ -221,25 +222,34 @@ addApiLayer() → Vector Layer on Map
 The project includes comprehensive development tools:
 
 ### 1. ApiDebugger.tsx
-- **Authentication Testing**: Login/logout functionality
+- **Authentication Testing**: Login/logout functionality with WIB timezone
 - **API Connectivity Tests**: Comprehensive endpoint testing
 - **Data Transformation Testing**: Validate transformer functions
 - **WKT Conversion Testing**: Test geometry conversion
 - **Real-time Logging**: Debug logs with different levels
 - **Network Inspection**: Request/response analysis
+- **State Synchronization Testing**: Authentication state monitoring
 
 ### 2. SmartGovLoader.tsx
-- **Streamlined Interface**: Clean UI for API data loading
+- **Streamlined Interface**: Clean UI for API data discovery
 - **Layer Discovery**: Automatic detection of available layer types
-- **Batch Loading**: Load multiple layer types simultaneously
-- **Progress Tracking**: Real-time loading progress and statistics
+- **WIB Timezone Display**: Token expiration in local timezone
 - **Authentication Management**: Built-in login/logout functionality
+- **Auto-Login**: Seamless authentication on component mount
+- **Simplified Functionality**: Removed loading capabilities, focuses on discovery
 
 ### 3. ApiLoadPanel.tsx
 - **Advanced Filtering**: Filter by type code and name patterns
 - **Pagination Control**: Navigate through large datasets
 - **Preview Table**: View results before loading as layers
 - **Direct Integration**: Load filtered results as map layers
+
+### 4. LayerLoadModal.tsx
+- **Hierarchical Grouping**: Features organized by type and refWilayah
+- **Enhanced UI**: Improved scrollbar visibility and responsive design
+- **Authentication Integration**: Auto-login when accessing API tab
+- **State Synchronization**: Real-time authentication status updates
+- **Progress Tracking**: Loading progress with detailed status messages
 
 ## Key Features
 
@@ -249,6 +259,7 @@ The project includes comprehensive development tools:
 - Complex filtering with operator support
 - Relationship inclusion handling
 - Full TypeScript support
+- SmartGov Framework compatibility
 
 ### HTTP Client Features
 - Robust URL joining with base path handling
@@ -256,13 +267,15 @@ The project includes comprehensive development tools:
 - Proper error handling with status codes
 - Support for both JSON and text responses
 - Development/production environment configuration
+- 401 error recovery with state synchronization
 
 ### Geospatial Processing
-- WKT to OpenLayers feature conversion
-- Geometry validation and sanitization
+- Simplified WKT to OpenLayers feature conversion
+- Direct geometry handling (no unnecessary sanitization)
 - Coordinate system transformations
 - Property preservation during conversion
 - Batch processing capabilities
+- QGIS compatibility optimizations
 
 ### Data Transformation
 - Attribute extraction from complex API responses
@@ -270,6 +283,15 @@ The project includes comprehensive development tools:
 - Type-based grouping and filtering
 - Statistics and summary generation
 - Error handling and recovery
+- QGIS export optimization
+
+### Authentication System
+- **WIB Timezone Support**: All timestamps in Indonesia Western Time
+- **Auto-Login**: Seamless authentication on app restart
+- **State Synchronization**: Real-time updates across components
+- **Token Management**: Proper expiration handling and refresh
+- **Request-Token Endpoint**: Uses `/api/auth/request-token`
+- **Error Recovery**: Comprehensive 401 error handling
 
 ### Development Experience
 - Hot module replacement with Vite
@@ -278,22 +300,61 @@ The project includes comprehensive development tools:
 - Comprehensive debugging tools
 - Environment-specific configuration
 - API testing framework
+- Unused variable cleanup and code optimization
 
 ## API Configuration
+
+### Environment Variables
+```bash
+# Development
+VITE_API_BASE_URL=http://localhost:3000/api
+VITE_ENABLE_API_DEBUGGING=true
+VITE_DEFAULT_AUTH_USER=sa
+VITE_DEFAULT_AUTH_PASSWORD=pass@word1
+
+# Production
+VITE_API_BASE_URL=https://retfw.smartgov.id/framework
+VITE_ENABLE_API_DEBUGGING=false
+```
 
 ### Development Environment
 - **Base URL**: `/api` (proxied via Vite)
 - **Authentication**: `/api/auth/login`
+- **Request Token**: `/api/auth/request-token`
 - **Spatial Features**: `/api/spatial-feature`
 
 ### Production Environment
 - **Base URL**: `https://retfw.smartgov.id/framework`
 - **Authentication**: `/framework/auth/login`
+- **Request Token**: `/framework/auth/request-token`
 - **Spatial Features**: `/framework/spatial-feature`
 
 ### Default Credentials
 - **Username**: `sa`
 - **Password**: `pass@word1`
+
+## Component Enhancements
+
+### FocusCard.tsx Improvements
+- **Metadata Editing**: Comprehensive attribute editing interface
+- **Selective Display**: Shows only essential attributes (Nama wilayah, ID wilayah)
+- **Dynamic Attributes**: Allows users to add custom metadata
+- **Code Cleanup**: Removed unused functions and variables
+- **QGIS Compatibility**: Optimized attribute structure for export
+
+### LayerLoadModal.tsx Enhancements
+- **Hierarchical Display**: Features organized by type and refWilayah
+- **Improved Scrolling**: Enhanced scrollbar visibility and overflow handling
+- **Authentication Integration**: Auto-login and state synchronization
+- **Simplified Selection**: Removed duplicate functionality
+- **Responsive Design**: Better viewport-based sizing
+
+### SmartGovLoader.tsx Simplification
+- **Discovery Focus**: Removed loading capabilities, focuses on layer discovery
+- **Clean UI**: Streamlined interface without duplicate buttons
+- **WIB Timezone**: Token expiration display in local timezone
+- **Auto-Login**: Seamless authentication on component mount
+- **Code Optimization**: Removed unused imports and variables
 
 ## Documentation Guides
 
@@ -311,12 +372,30 @@ The project includes comprehensive development tools:
 - Best practices
 - Performance monitoring
 
+### SPATIAL_FEATURE_API_IMPLEMENTATION.md
+- Spatial Feature API specification
+- Response structure documentation
+- Layer grouping logic
+- Attribute handling details
+
+### LAYER_LOAD_MODAL_ENHANCEMENT.md
+- Hierarchical feature grouping
+- UI/UX improvements
+- Authentication integration
+- Performance optimizations
+
+### WKT_CONVERTER_ANALYSIS.md
+- WKT converter simplification analysis
+- Performance improvements
+- API data format considerations
+- Migration from complex to simple converter
+
 ### PROJECT_CONTEXT.md
 - Complete project overview
 - Technology stack details
 - API architecture explanation
 - Development setup instructions
-- Common development tasks
+- Recent major updates
 
 ## File Naming Conventions
 
@@ -326,3 +405,46 @@ The project includes comprehensive development tools:
 - **Types**: camelCase with descriptive names (e.g., `shp-write.d.ts`)
 - **Features**: camelCase (e.g., `loadFromApi.ts`)
 - **Documentation**: UPPERCASE_SNAKE_CASE (e.g., `API_DEBUGGING_GUIDE.md`)
+
+## Code Quality Standards
+
+- **TypeScript Strict Mode**: Enabled for type safety
+- **ESLint Configuration**: Comprehensive code quality rules
+- **Unused Variable Cleanup**: Regular removal of unused code
+- **Component Optimization**: Performance-focused development
+- **Error Handling**: Comprehensive error management
+- **Documentation**: Up-to-date documentation for all features
+
+## Recent Architectural Changes
+
+### WKT Converter Simplification
+- **Before**: Complex `wktConverter.ts` with extensive sanitization
+- **After**: Simplified `simpleWKTConverter.ts` with direct OpenLayers conversion
+- **Reasoning**: API provides well-formatted WKT, eliminating need for complex processing
+
+### Authentication System Overhaul
+- **WIB Timezone**: All timestamps now display in Indonesia Western Time
+- **State Synchronization**: Real-time authentication updates across all components
+- **Request-Token Endpoint**: Updated to use `/api/auth/request-token`
+- **Auto-Login**: Improved seamless authentication experience
+
+### UI/UX Improvements
+- **LayerLoadModal**: Enhanced with hierarchical grouping and better scrolling
+- **SmartGovLoader**: Simplified interface focusing on discovery
+- **FocusCard**: Improved metadata editing with selective attribute display
+- **Navigation**: Fixed routing issues and modal positioning
+
+### Code Quality Initiatives
+- **Unused Variable Removal**: Comprehensive cleanup across all components
+- **Import Optimization**: Removed unused imports and exports
+- **TypeScript Compliance**: Fixed all TypeScript warnings
+- **Bundle Size Optimization**: Removed dead code and unused functions
+
+---
+
+**Last Updated**: October 2025
+**Architecture Version**: 2.0
+**Framework**: React 19.1.1 with TypeScript
+**Authentication**: Enhanced with WIB timezone and state synchronization
+**Spatial Features**: Complete API integration with hierarchical grouping
+**Code Quality**: Optimized with comprehensive cleanup and performance improvements

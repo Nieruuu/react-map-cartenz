@@ -308,14 +308,6 @@ export default function LayerLoadModal({
     );
   };
 
-  // Toggle sub-group selection
-  const toggleSubGroupSelection = (typeCode: string, refWilayah: string) => {
-    const key = `${typeCode}:${refWilayah}`;
-    setSelectedSubGroups((prev) =>
-      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
-    );
-  };
-
   // Toggle group expansion
   const toggleGroupExpansion = (typeCode: string) => {
     setExpandedGroups((prev) => {
@@ -407,12 +399,12 @@ export default function LayerLoadModal({
 
     try {
       let totalFeatures = 0;
-      let loadedGroups = 0;
       const totalToLoad = selectedGroups.length + selectedSubGroups.length;
 
       // Load selected groups
       for (const typeCode of selectedGroups) {
-        const progress = ((loadedGroups + 1) / totalToLoad) * 100;
+        const progress =
+          ((selectedGroups.indexOf(typeCode) + 1) / totalToLoad) * 100;
 
         setApiLoadState({
           isLoading: true,
@@ -432,7 +424,6 @@ export default function LayerLoadModal({
         if (result.length > 0) {
           totalFeatures += result[0].count;
         }
-        loadedGroups++;
       }
 
       // Skip loading sub-groups separately since they're loaded with parent groups

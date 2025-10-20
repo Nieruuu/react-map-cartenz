@@ -9,7 +9,6 @@ import {
   transformSpatialFeatures,
   getUniqueTypeCodes,
 } from "../../lib/api/transformers";
-import { addApiLayersByType } from "../../features/loadFromApi";
 import { auth, type AuthState } from "../../lib/api/auth";
 
 interface LayerInfo {
@@ -115,7 +114,7 @@ export function SmartGovLoader() {
         name: getLayerNameForType(typeCode),
         typeCode,
         count: 0, // Will be updated when loaded
-        description: getLayerDescriptionForType(typeCode),
+        description: getLayerDescriptionForType(),
       }));
 
       setAvailableLayers(layers);
@@ -157,7 +156,7 @@ export function SmartGovLoader() {
   }
 
   // Get description for layer type
-  function getLayerDescriptionForType(_typeCode: string): string {
+  function getLayerDescriptionForType(): string {
     // Return generic description for all types
     return "Spatial features from SmartGov database";
   }

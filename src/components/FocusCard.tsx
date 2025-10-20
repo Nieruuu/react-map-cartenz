@@ -20,18 +20,6 @@ const RESERVED_KEYS = new Set([
 
 type Pair = { codeKey: string; nameKey: string; official: boolean };
 
-function detectPair(props: Record<string, any>): Pair {
-  const has = (k: string) => Object.prototype.hasOwnProperty.call(props, k);
-  if (has("D_KD_DT2") && has("D_NM_DT2"))
-    return { codeKey: "D_KD_DT2", nameKey: "D_NM_DT2", official: true };
-  if (has("D_KD_KEC") && has("D_NM_KEC"))
-    return { codeKey: "D_KD_KEC", nameKey: "D_NM_KEC", official: true };
-  if (has("D_KD_KEL") && has("D_NM_KEL"))
-    return { codeKey: "D_KD_KEL", nameKey: "D_NM_KEL", official: true };
-  // Gaada kayak diatas? berarti CUSTOM → pakai id/name.
-  return { codeKey: "id", nameKey: "name", official: false };
-}
-
 export default function FocusCard() {
   const { focus, setFocus } = useMapStore();
 
@@ -114,7 +102,7 @@ export default function FocusCard() {
       initialKeysRef.current = new Set();
 
       // Only keep track of all attributes internally, but don't add them to the display list
-      Object.entries(p).forEach(([k, v]) => {
+      Object.entries(p).forEach(([k]) => {
         if (RESERVED_KEYS.has(k)) return;
         // Store all keys for tracking but don't display them
         initialKeysRef.current.add(k);
@@ -365,7 +353,9 @@ export default function FocusCard() {
           </svg>
           <div className="preview-info">
             <div className="preview-type">{g.type}</div>
-            <div className="preview-coords">{ring3857.length} vertices</div>
+            <div className="preview-coords">
+              {ring3857.length > 0 ? ring3857.length - 1 : 0} vertices
+            </div>
           </div>
         </div>
       );
