@@ -18,9 +18,9 @@ export function ApiLoadPanel() {
 
   // Check authentication status on mount
   useEffect(() => {
-    const hasToken = !!auth.getToken();
-    setIsAuthenticated(hasToken);
-    if (hasToken) {
+    const authState = auth.getAuthState();
+    setIsAuthenticated(authState.isAuthenticated);
+    if (authState.isAuthenticated) {
       loadFeatures();
     }
   }, []);
@@ -31,11 +31,9 @@ export function ApiLoadPanel() {
     setMessage("Authenticating...");
 
     try {
-      // Auto-login if no token
-      if (!auth.getToken()) {
-        await auth.autoLogin();
-        setIsAuthenticated(true);
-      }
+      // Ensure we have a valid token before loading features
+      const authState = await auth.ensureAuthenticated();
+      setIsAuthenticated(authState.isAuthenticated);
 
       // Load features
       await loadFeatures();

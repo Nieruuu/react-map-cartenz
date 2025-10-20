@@ -1,5 +1,6 @@
 import { listSpatialFeatures, type SpatialFeature } from '../lib/api/spatialFeature';
-import { wktToFeature } from '../lib/geo/wktConverter';
+import { simpleWKTToFeature } from '../lib/geo/simpleWKTConverter';
+import { transformSpatialFeatures, type TransformOptions } from '../lib/api/transformers';
 import VectorLayer from 'ol/layer/Vector';
 import VectorSource from 'ol/source/Vector';
 import { styleFromCfg } from '../hooks/useLayersStore';
@@ -15,6 +16,7 @@ export async function addApiLayer(opts: {
   pageNumber?: number;
   pageSize?: number;
   filters?: string[];
+  includeSystemFields?: boolean;
 }) {
   const resp = await listSpatialFeatures({
     pageNumber: opts.pageNumber ?? 1,
@@ -26,45 +28,28 @@ export async function addApiLayer(opts: {
   const source = new VectorSource();
   let count = 0;
 
-  for (const feature of resp.data || []) {
-    // Extract geometry using the new spatial feature format
-    const wkt = feature.attribute?.find(a => a.attributeKey === 'spatialFeature.geometry')?.attributeValue;
-    if (!wkt) continue;
+  // Transform features using the transformer with simplified options
+  const transformOptions: TransformOptions = {
+    includeSystemFields: opts.includeSystemFields || false, // Default to false for QGIS compatibility
+    includeRawAttributes: false,
+    flattenAttributes: true,
+  };
+  
+  const transformedFeatures = transformSpatialFeatures(resp.data || [], transformOptions);
+
+  for (const transformedFeature of transformedFeatures) {
+    // Skip features without geometry
+    if (!transformedFeature.geometry) {
+      console.warn('No geometry found for feature:', transformedFeature.id);
+      continue;
+    }
     
-    // Use attributeValue from spatialFeature.refWilayah as the region name
-    const name = feature.attribute?.find(a => a.attributeKey === 'spatialFeature.refWilayah')?.attributeValue || `Feature ${feature.id}`;
-    
-    // Use id field as the unique region code
-    const regionCode = feature.id;
-    
-    // Get type code from spatialFeature.type
-    const typeCode = feature.attribute?.find(a => a.attributeKey === 'spatialFeature.type')?.attributeValue || '';
-    
-    // Build properties object
-    const properties: Record<string, any> = {
-      id: regionCode, // Use id field as the unique region code
-      name: name, // Use attributeValue from spatialFeature.refWilayah as the region name
-      uuid: feature.value,
-      typeCode: typeCode,
-      identifier: feature.identifier,
-      label: feature.label,
-      status: feature.status,
-      description: feature.description,
-      createdBy: feature.createdBy,
-      createdAt: feature.createdAt,
-      updatedBy: feature.updatedBy,
-      updatedAt: feature.updatedAt,
-    };
-    
-    // Flatten extra attributes (non spatialFeature.*)
-    (feature.attribute || []).forEach((a: any) => {
-      if (!/^spatialFeature\./.test(a.attributeKey)) {
-        properties[a.attributeKey] = a.attributeValue;
-      }
-    });
-    
-    const olFeature = wktToFeature(wkt, properties);
-    if (!olFeature) continue;
+    // Use simple WKT conversion (API now provides well-formatted WKT)
+    const olFeature = simpleWKTToFeature(transformedFeature.geometry, transformedFeature.properties);
+    if (!olFeature) {
+      console.error('WKT conversion failed for:', transformedFeature.geometry.substring(0, 50) + '...');
+      continue;
+    }
     
     source.addFeature(olFeature);
     count++;
@@ -132,42 +117,28 @@ export async function addApiLayersByType(opts: {
     const source = new VectorSource();
     let count = 0;
 
-    for (const feature of features) {
-      // Extract geometry using the new spatial feature format
-      const wkt = feature.attribute?.find(a => a.attributeKey === 'spatialFeature.geometry')?.attributeValue;
-      if (!wkt) continue;
+    // Use the transformer to properly handle the features with only id and name
+    const transformOptions: TransformOptions = {
+      includeSystemFields: false, // Only include id and name
+      includeRawAttributes: false,
+      flattenAttributes: true,
+    };
+    
+    const transformedFeatures = transformSpatialFeatures(features, transformOptions);
+
+    for (const transformedFeature of transformedFeatures) {
+      // Skip features without geometry
+      if (!transformedFeature.geometry) {
+        console.warn('No geometry found for feature:', transformedFeature.id);
+        continue;
+      }
       
-      // Use attributeValue from spatialFeature.refWilayah as the region name
-      const name = feature.attribute?.find(a => a.attributeKey === 'spatialFeature.refWilayah')?.attributeValue || `Feature ${feature.id}`;
-      
-      // Use id field as the unique region code
-      const regionCode = feature.id;
-      
-      // Build properties object
-      const properties: Record<string, any> = {
-        id: regionCode, // Use id field as the unique region code
-        name: name, // Use attributeValue from spatialFeature.refWilayah as the region name
-        uuid: feature.value,
-        typeCode: typeCode,
-        identifier: feature.identifier,
-        label: feature.label,
-        status: feature.status,
-        description: feature.description,
-        createdBy: feature.createdBy,
-        createdAt: feature.createdAt,
-        updatedBy: feature.updatedBy,
-        updatedAt: feature.updatedAt,
-      };
-      
-      // Flatten extra attributes (non spatialFeature.*)
-      (feature.attribute || []).forEach((a: any) => {
-        if (!/^spatialFeature\./.test(a.attributeKey)) {
-          properties[a.attributeKey] = a.attributeValue;
-        }
-      });
-      
-      const olFeature = wktToFeature(wkt, properties);
-      if (!olFeature) continue;
+      // Use simple WKT conversion (API now provides well-formatted WKT)
+      const olFeature = simpleWKTToFeature(transformedFeature.geometry, transformedFeature.properties);
+      if (!olFeature) {
+        console.error('WKT conversion failed for:', transformedFeature.geometry.substring(0, 50) + '...');
+        continue;
+      }
       
       source.addFeature(olFeature);
       count++;
@@ -205,7 +176,8 @@ export async function addApiLayersByType(opts: {
 }
 
 /**
- * Get human-readable name for layer type
+ * Get layer name for layer type
+ * Returns the type code directly as the layer name
  */
 function getLayerNameForType(typeCode: string): string {
   // Return the type code directly as requested

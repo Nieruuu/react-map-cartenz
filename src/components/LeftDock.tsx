@@ -1577,12 +1577,12 @@ export default function LeftDock() {
       const v = props[k];
       if (v === undefined) continue;
       if (v === null) out[k] = null;
-      else if (
-        typeof v === "string" ||
-        typeof v === "number" ||
-        typeof v === "boolean"
-      )
-        out[k] = v;
+      else if (typeof v === "string") out[k] = v;
+      else if (typeof v === "number") {
+        // Convert all numbers to strings to avoid locale formatting in shp-write
+        // This prevents "448" from becoming "448,000" in QGIS
+        out[k] = String(v);
+      } else if (typeof v === "boolean") out[k] = v;
       else if (v instanceof Date) out[k] = v.toISOString();
       else out[k] = JSON.stringify(v);
     }
@@ -2048,7 +2048,7 @@ export default function LeftDock() {
                   borderColor: "#6366f1",
                 }}
               >
-                <span className="icon">move_group</span>
+                <span className="icon">open_with</span>
               </button>
 
               <button
@@ -2230,8 +2230,9 @@ export default function LeftDock() {
               </button>
             </div>
             <div className="muted" style={{ marginTop: 8, fontSize: 11 }}>
-              Hasil import tidak langsung tampil di peta. Buka <b>Load Peta</b>{" "}
-              untuk memilih dataset. Setelah edit, gunakan <b>Export ZIP</b>.
+              Hasil import tidak langsung tampil di peta. Buka{" "}
+              <b>Load Peta/Load (API)</b> untuk memilih dataset. Setelah edit,
+              gunakan <b>Export ZIP</b>.
             </div>
           </div>
         </div>

@@ -32,6 +32,7 @@ import shp from "shpjs";
 
 import { useMapStore } from "../hooks/useMapStore";
 import { styleFromCfg, useLayersStore } from "../hooks/useLayersStore";
+import ApiDebugger from "../dev/ApiDebugger";
 
 const ADMIN_SRC = "/data/5103.zip";
 const INITIAL_CENTER = fromLonLat([115.178, -8.5]);

@@ -1,9 +1,10 @@
 // If the above import bothers your setup, remove it. It's only for types.
 
-const isDev = import.meta.env.DEV;
+import { auth } from './auth';
+import { API_BASE_URL, ENABLE_API_DEBUG } from '../config';
 
-// In dev we call /api/* then vite rewrites to /framework/*
-export const API_BASE = isDev ? '/api' : 'https://retfw.smartgov.id/framework';
+// Use environment-based API base URL from config
+export const API_BASE = API_BASE_URL;
 
 function getStoredToken(): string | null {
   try {
@@ -57,9 +58,13 @@ export const postNoAuth = async <T>(path: string, body?: unknown): Promise<T> =>
   return data as T;
 };
 function getAuthHeader(): Record<string, string> {
-  const token = getStoredToken();
-  // Force Bearer even if backend says tokenType = "jws"
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  try {
+    // Use the authentication manager for consistent token retrieval
+    return auth.getAuthHeader();
+  } catch {
+    // If not authenticated, return empty header
+    return {};
+  }
 }
 
 export class HttpError extends Error {
@@ -79,15 +84,43 @@ export async function request<T>(
   init: RequestInit = {}
 ): Promise<T> {
   const url = path.startsWith('http') ? path : `${API_BASE}${path}`;
+  
+  // Initial request with current token
   const headers: Record<string, string> = {
     Accept: 'application/json',
     ...(init.headers as Record<string, string> || {}),
     ...getAuthHeader(),
   };
+  
+  // Debug logging for request (controlled by environment variable)
+  if (ENABLE_API_DEBUG) {
+    console.debug('API Request:', {
+      url,
+      method: init.method || 'GET',
+      hasAuthHeader: !!headers.Authorization,
+      authHeaderLength: headers.Authorization?.length,
+    });
+  }
+  
   const res = await fetch(url, { ...init, headers });
+
   const txt = await res.text();
   let data: any = null;
   try { data = txt ? JSON.parse(txt) : null; } catch { data = txt; }
+
+  if (res.status === 401) {
+    if (ENABLE_API_DEBUG) {
+      console.warn('API request unauthorized, clearing token', {
+        url,
+        status: res.status,
+        requestHadAuth: !!headers.Authorization,
+      });
+    }
+
+    await auth.logout();
+    throw new HttpError(url, res.status, data);
+  }
+
   if (!res.ok) {
     throw new HttpError(url, res.status, data);
   }

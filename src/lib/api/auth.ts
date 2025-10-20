@@ -4,6 +4,8 @@
  * Includes automatic token refresh and expiration monitoring
  */
 
+import { API_ENDPOINTS, DEFAULT_USER, DEFAULT_PASS, ENABLE_API_DEBUG, AUTH_AUTO_LOGIN } from '../config';
+
 export interface AuthState {
   token: string | null;
   tokenType: string;
@@ -26,10 +28,10 @@ const TOKEN_KEY = 'ret_token';
 const EXPIRES_AT_KEY = 'ret_token_expires_at';
 const REFRESH_BUFFER_MS = 5 * 60 * 1000; // 5 minutes before expiration
 const WIB_OFFSET_MS = 7 * 60 * 60 * 1000; // UTC+7 in milliseconds
-const TOKEN_ENDPOINT = '/api/auth/request-token';
+const TOKEN_ENDPOINT = API_ENDPOINTS.AUTH.LOGIN.replace('/login', '/request-token');
 const DEFAULT_CREDENTIALS: LoginCredentials = {
-  userIdentifier: 'sa',
-  password: 'pass@word1',
+  userIdentifier: DEFAULT_USER,
+  password: DEFAULT_PASS,
 };
 
 /**
@@ -148,8 +150,8 @@ export class AuthenticationManager {
       isAuthenticated: !!token && !isExpired,
     };
     
-    // Debug logging for authentication state
-    if (process.env.NODE_ENV === 'development') {
+    // Debug logging for authentication state (controlled by environment variable)
+    if (ENABLE_API_DEBUG) {
       console.debug('Auth state:', {
         hasToken: !!token,
         tokenLength: token?.length,
@@ -198,8 +200,24 @@ export class AuthenticationManager {
     const expiration = expiresAt || this.getExpirationTime();
     if (!expiration) return true;
     
-    // Check if token is actually expired (no buffer for UI state)
-    return WIBTimeUtils.isWIBTimestampExpired(expiration, 0);
+    // Check if token is actually expired using regular timestamp comparison
+    // The expiration time from API is already in UTC, so compare with current UTC time
+    const currentTime = Date.now();
+    const isExpired = currentTime >= expiration;
+    
+    // Debug logging for expiration check (controlled by environment variable)
+    if (ENABLE_API_DEBUG) {
+      console.debug('Token expiration check:', {
+        expiration,
+        currentTime,
+        isExpired,
+        expiresAtWIB: WIBTimeUtils.formatWIBTime(expiration),
+        currentTimeWIB: WIBTimeUtils.formatWIBTime(currentTime),
+        timeUntilExpiry: expiration - currentTime,
+      });
+    }
+    
+    return isExpired;
   }
 
   /**
@@ -209,7 +227,24 @@ export class AuthenticationManager {
     const expiration = expiresAt || this.getExpirationTime();
     if (!expiration) return true;
     
-    return WIBTimeUtils.isWIBTimestampExpired(expiration, REFRESH_BUFFER_MS);
+    // Check if token will expire within the buffer time
+    const currentTime = Date.now();
+    const isExpiringSoon = currentTime >= (expiration - REFRESH_BUFFER_MS);
+    
+    // Debug logging for expiration soon check (controlled by environment variable)
+    if (ENABLE_API_DEBUG) {
+      console.debug('Token expiring soon check:', {
+        expiration,
+        currentTime,
+        isExpiringSoon,
+        bufferMs: REFRESH_BUFFER_MS,
+        expiresAtWIB: WIBTimeUtils.formatWIBTime(expiration),
+        currentTimeWIB: WIBTimeUtils.formatWIBTime(currentTime),
+        timeUntilBuffer: (expiration - REFRESH_BUFFER_MS) - currentTime,
+      });
+    }
+    
+    return isExpiringSoon;
   }
 
   /**
@@ -299,8 +334,8 @@ export class AuthenticationManager {
       throw new AuthError('Not authenticated', 'NOT_AUTHENTICATED');
     }
     
-    // Debug logging for token attachment
-    if (process.env.NODE_ENV === 'development') {
+    // Debug logging for token attachment (controlled by environment variable)
+    if (ENABLE_API_DEBUG) {
       console.debug('Attaching auth header:', {
         tokenLength: token.length,
         tokenPrefix: token.substring(0, 10) + '...',
@@ -319,6 +354,17 @@ export class AuthenticationManager {
       const normalizedExpiration = normalizeExpirationTimestamp(response.expireAt);
       localStorage.setItem(TOKEN_KEY, response.accessToken);
       localStorage.setItem(EXPIRES_AT_KEY, normalizedExpiration.toString());
+      
+      // Debug logging for successful token storage (controlled by environment variable)
+      if (ENABLE_API_DEBUG) {
+        console.debug('Token stored successfully:', {
+          tokenLength: response.accessToken.length,
+          expiresAt: normalizedExpiration,
+          expiresAtWIB: WIBTimeUtils.formatWIBTime(normalizedExpiration),
+          currentTime: Date.now(),
+          currentTimeWIB: WIBTimeUtils.getCurrentWIBTimestamp(),
+        });
+      }
       
       // No automatic refresh scheduling - tokens will be requested when needed
     } catch (error) {
@@ -366,13 +412,18 @@ export class AuthenticationManager {
       return this.getAuthState();
     }
     
-    // Otherwise, auto-login with default credentials
-    try {
-      return await this.autoLogin();
-    } catch (error) {
-      console.warn('Auto-login failed on initialization:', error);
-      return this.getAuthState(); // Return unauthenticated state
+    // Otherwise, auto-login with default credentials if enabled
+    if (AUTH_AUTO_LOGIN) {
+      try {
+        return await this.autoLogin();
+      } catch (error) {
+        console.warn('Auto-login failed on initialization:', error);
+        return this.getAuthState(); // Return unauthenticated state
+      }
     }
+    
+    // Return current state if auto-login is disabled
+    return this.getAuthState();
   }
 
   /**

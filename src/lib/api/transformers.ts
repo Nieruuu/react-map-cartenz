@@ -22,6 +22,7 @@ export interface TransformOptions {
   typeKey?: string;
   includeRawAttributes?: boolean;
   flattenAttributes?: boolean;
+  includeSystemFields?: boolean; // Simplified option to include system fields
 }
 
 /**
@@ -92,21 +93,25 @@ export function transformSpatialRow(
   const geometry = extractAttribute(row, opts.geometryKey);
   const typeCode = extractAttribute(row, opts.typeKey) || '';
 
-  // Build properties object
-  const properties: Record<string, any> = {
+  // Build properties object - only include essential fields by default
+  let properties: Record<string, any> = {
     id: row.id,
-    uuid: row.value,
     name: name,
-    typeCode: typeCode,
-    identifier: row.identifier,
-    label: row.label,
-    status: row.status,
-    description: row.description,
-    createdBy: row.createdBy,
-    createdAt: row.createdAt,
-    updatedBy: row.updatedBy,
-    updatedAt: row.updatedAt,
   };
+  
+  // Only include system fields if explicitly requested
+  if (opts.includeSystemFields) {
+    properties.uuid = row.value;
+    properties.typeCode = typeCode;
+    properties.identifier = row.identifier;
+    properties.label = row.label;
+    properties.status = row.status;
+    properties.description = row.description;
+    properties.createdBy = row.createdBy;
+    properties.createdAt = row.createdAt;
+    properties.updatedBy = row.updatedBy;
+    properties.updatedAt = row.updatedAt;
+  }
 
   // Flatten additional attributes if requested
   if (opts.flattenAttributes && row.attribute) {
@@ -126,8 +131,10 @@ export function transformSpatialRow(
     properties._rawAttributes = row.attribute;
   }
 
+  // No need for complex filtering anymore - we only include id and name by default
+
   return {
-    id: String(row.id),
+    id: String(row.id).replace(/,/g, ''), // Remove commas from ID
     uuid: row.value,
     name: String(name),
     typeCode: String(typeCode),
@@ -158,21 +165,25 @@ export function transformSpatialFeature(
   const geometry = extractSpatialFeatureAttribute(feature, opts.geometryKey);
   const typeCode = extractSpatialFeatureAttribute(feature, opts.typeKey) || '';
 
-  // Build properties object
-  const properties: Record<string, any> = {
+  // Build properties object - only include essential fields by default
+  let properties: Record<string, any> = {
     id: feature.id, // Use id field as the unique region code
-    uuid: feature.value,
     name: name, // Use attributeValue from spatialFeature.refWilayah as the region name
-    typeCode: typeCode,
-    identifier: feature.identifier,
-    label: feature.label,
-    status: feature.status,
-    description: feature.description,
-    createdBy: feature.createdBy,
-    createdAt: feature.createdAt,
-    updatedBy: feature.updatedBy,
-    updatedAt: feature.updatedAt,
   };
+  
+  // Only include system fields if explicitly requested
+  if (opts.includeSystemFields) {
+    properties.uuid = feature.value;
+    properties.typeCode = typeCode;
+    properties.identifier = feature.identifier;
+    properties.label = feature.label;
+    properties.status = feature.status;
+    properties.description = feature.description;
+    properties.createdBy = feature.createdBy;
+    properties.createdAt = feature.createdAt;
+    properties.updatedBy = feature.updatedBy;
+    properties.updatedAt = feature.updatedAt;
+  }
 
   // Flatten additional attributes if requested
   if (opts.flattenAttributes && feature.attribute) {
@@ -192,8 +203,10 @@ export function transformSpatialFeature(
     properties._rawAttributes = feature.attribute;
   }
 
+  // No need for complex filtering anymore - we only include id and name by default
+
   return {
-    id: String(feature.id),
+    id: String(feature.id).replace(/,/g, ''), // Remove commas from ID
     uuid: feature.value,
     name: String(name),
     typeCode: String(typeCode),

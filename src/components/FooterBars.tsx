@@ -1,13 +1,13 @@
 // src/components/FooterBars.tsx
-import { useMapStore } from '../hooks/useMapStore'
+import { useMapStore } from "../hooks/useMapStore";
 
-export default function FooterBars(){
-  const { zoom, scaleText } = useMapStore()
-  const safeZoom = typeof zoom === 'number' ? zoom : 0;
+export default function FooterBars() {
+  const { zoom, scaleText } = useMapStore();
+  const safeZoom = typeof zoom === "number" ? zoom : 0;
   return (
     <>
       {/* kiri bawah – versi */}
-      <div className="infochip">2025 © Rafly lagi ngetes ygy</div>
+      <div className="infochip">2025 © Rafly lagi ngetes gaiissss</div>
 
       {/* kanan bawah – scale & tombol biru */}
       <div className="footerbar">
@@ -17,5 +17,5 @@ export default function FooterBars(){
         </div>
       </div>
     </>
-  )
+  );
 }

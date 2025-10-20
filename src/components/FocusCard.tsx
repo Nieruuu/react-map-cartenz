@@ -83,61 +83,45 @@ export default function FocusCard() {
         return;
 
       const p: Record<string, any> = props || {};
-      const pair = detectPair(p);
-      pairRef.current = pair;
 
-      const kodeAwal =
-        p[pair.codeKey] != null && String(p[pair.codeKey]) !== ""
-          ? String(p[pair.codeKey])
-          : String((focus as any)?.id || "");
-      const namaAwal =
-        p[pair.nameKey] != null && String(p[pair.nameKey]) !== ""
-          ? String(p[pair.nameKey])
-          : String((focus as any)?.name || "");
+      // Extract Nama Wilayah from spatialFeature.refWilayah attribute
+      let namaWilayah = "";
+      let idWilayah = "";
 
-      setTempId(kodeAwal);
-      setTempName(namaAwal);
-
-      const list: KV[] = [];
-      // Jika pasangan resmi (D_*), tampilkan sebagai baris terkunci.
-      // Untuk custom (id/name), JANGAN tampilkan di daftar “Atribut Tambahan”.
-      if (pair.official) {
-        list.push({
-          id: `${pair.codeKey}::locked`,
-          key: pair.codeKey,
-          value: kodeAwal,
-          locked: true,
-        });
-        list.push({
-          id: `${pair.nameKey}::locked`,
-          key: pair.nameKey,
-          value: namaAwal,
-          locked: true,
+      // Handle API-loaded features with attribute structure
+      if (p._rawAttributes && Array.isArray(p._rawAttributes)) {
+        p._rawAttributes.forEach((attr: any) => {
+          if (attr.attributeKey === "spatialFeature.refWilayah") {
+            namaWilayah = attr.attributeValue || "";
+          }
         });
       }
 
-      // atribut lain, tapi buang id/name dari daftar
+      // Handle direct attribute structure
+      if (p["spatialFeature.refWilayah"]) {
+        namaWilayah = p["spatialFeature.refWilayah"];
+      }
+
+      // Extract ID wilayah from id field (not uuid/value field)
+      idWilayah = p.id || String((focus as any)?.id || "");
+
+      // Set the form values
+      setTempName(namaWilayah || String((focus as any)?.name || ""));
+      setTempId(idWilayah);
+
+      // Store all attributes in internal state but don't display them
+      const list: KV[] = [];
       initialKeysRef.current = new Set();
+
+      // Only keep track of all attributes internally, but don't add them to the display list
       Object.entries(p).forEach(([k, v]) => {
         if (RESERVED_KEYS.has(k)) return;
-        if (k === pair.codeKey || k === pair.nameKey) {
-          initialKeysRef.current.add(k);
-          return;
-        }
-        const val =
-          v == null
-            ? ""
-            : typeof v === "object"
-            ? JSON.stringify(v)
-            : String(v);
-        list.push({
-          id: `${k}::${Math.random().toString(36).slice(2)}`,
-          key: k,
-          value: val,
-        });
+        // Store all keys for tracking but don't display them
         initialKeysRef.current.add(k);
       });
 
+      // Don't add any default attributes to the display list
+      // Only user-added attributes will be shown
       setRows(list);
       setLoadingProps(false);
     };
@@ -200,9 +184,8 @@ export default function FocusCard() {
   const saveAll = () => {
     if (!focus) return;
     const { id, layerId } = focus as any;
-    const { codeKey, nameKey } = pairRef.current;
 
-    // ambil rows non-reserved saja
+    // ambil rows non-reserved saja (user-added attributes only)
     const cleaned = rows
       .map((x) => ({
         key: (x.key || "").trim(),
@@ -213,17 +196,19 @@ export default function FocusCard() {
 
     const updates: Record<string, string> = {};
     cleaned.forEach(({ key, value }) => (updates[key] = value));
-    // override nilai kunci resmi dari input atas
-    updates[codeKey] = (tempId || "").trim();
-    updates[nameKey] = (tempName || "").trim();
+
+    // Update the core fields for QGIS export compatibility
+    updates["spatialFeature.refWilayah"] = (tempName || "").trim();
+    updates["uuid"] = (tempId || "").trim();
+    updates["id"] = (tempId || "").trim();
+    updates["name"] = (tempName || "").trim();
 
     const currentKeys = new Set(
       cleaned.filter((x) => !x.locked).map((x) => x.key)
     );
     const deletes: string[] = [];
     initialKeysRef.current.forEach((k) => {
-      if (!currentKeys.has(k) && k !== codeKey && k !== nameKey)
-        deletes.push(k);
+      if (!currentKeys.has(k) && !RESERVED_KEYS.has(k)) deletes.push(k);
     });
 
     const onApplied = (ev: Event) => {
@@ -236,7 +221,7 @@ export default function FocusCard() {
       once: true,
     });
 
-    // Hanya apply props; id/name sama sekali tidak ikut
+    // Apply props with proper structure for API compatibility
     window.dispatchEvent(
       new CustomEvent("apply-feature-props", {
         detail: { id, layerId, updates, deletes },
@@ -550,18 +535,18 @@ export default function FocusCard() {
                     type="text"
                     value={tempName}
                     onChange={(e) => setTempName(e.target.value)}
-                    placeholder="Nama wilayah…"
+                    placeholder="Nama wilayah (dari spatialFeature.refWilayah)…"
                     style={{ flex: 1 }}
                   />
                 </div>
 
                 <div className="row" style={{ alignItems: "center", gap: 8 }}>
-                  <label style={{ minWidth: 140 }}>Kode Wilayah</label>
+                  <label style={{ minWidth: 140 }}>ID Wilayah</label>
                   <input
                     type="text"
                     value={tempId}
                     onChange={(e) => setTempId(e.target.value)}
-                    placeholder="Kode wilayah…"
+                    placeholder="ID wilayah (dari uuid/id)…"
                     style={{ flex: 1 }}
                   />
                 </div>

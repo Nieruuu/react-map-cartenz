@@ -99,12 +99,17 @@ The application uses a comprehensive JSON:API compliant backend with the followi
 - **AuthenticationManager**: Singleton class managing authentication state
 - **Token Management**: Automatic storage, refresh, and expiry handling
 - **Login/Logout**: Complete authentication flow with SmartGov backend
-- **Automatic Token Refresh**: Scheduled refresh 5 minutes before expiry
-- **Error Handling**: Comprehensive error types and recovery
+- **WIB Timezone Support**: Indonesia Western Indonesia Time (UTC+7) timestamp handling
+- **Token Expiration Logic**: Separated actual expiration from "expiring soon" checks
+- **Auto-Login Functionality**: Seamless authentication on app restart and API access
+- **State Synchronization**: Real-time authentication state updates across components
+- **Error Handling**: Comprehensive error types and recovery with detailed logging
 
 ### 2. HTTP Client (`src/lib/api/client.ts`)
 - **Robust URL Handling**: Base path configuration for dev/prod environments
-- **Authentication Integration**: Automatic Bearer token injection
+- **Authentication Integration**: Consistent Bearer token injection using auth manager
+- **401 Error Handling**: Automatic authentication state updates on token expiry
+- **Debugging Support**: Comprehensive request/response logging for troubleshooting
 - **Error Handling**: Structured HttpError class with status codes
 - **Legacy Compatibility**: Backward-compatible exports for existing code
 
@@ -115,6 +120,13 @@ The application uses a comprehensive JSON:API compliant backend with the followi
 - **Include Support**: Relationship inclusion handling
 
 ### 4. Spatial Data APIs
+
+#### Spatial Feature API (`src/lib/api/spatialFeature.ts`)
+- **Pagination Support**: Complete pagination with total, pageNumber, pageSize
+- **Attribute Structure**: Key-value attribute system with proper typing
+- **Layer Grouping**: Group features by spatialFeature.type attribute
+- **Status Filtering**: Only return active features (status = 1)
+- **Type Safety**: Full TypeScript definitions for response structure
 
 #### Generic Spatial API (`src/lib/api/spatialGeneric.ts`)
 - **SpatialRow**: Core data structure with attributes
@@ -155,17 +167,22 @@ The application uses a comprehensive JSON:API compliant backend with the followi
 
 ### Authentication Flow
 1. **Login Request** → POST `/api/auth/login`
-2. **Token Storage** → localStorage with expiry
-3. **Automatic Injection** → All subsequent API requests
-4. **Token Refresh** → Scheduled 5 minutes before expiry
-5. **Logout** → Clear storage and cancel refresh
+2. **Token Storage** → localStorage with WIB timezone expiry
+3. **Auto-Login** → Automatic authentication on app restart
+4. **State Synchronization** → Real-time updates across all components
+5. **Token Validation** → Separate actual expiration from "expiring soon"
+6. **Automatic Injection** → All subsequent API requests
+7. **401 Error Recovery** → Automatic state updates on token expiry
+8. **Logout** → Clear storage and cancel refresh
 
 ### Spatial Data Loading
-1. **Layer Discovery** → GET `/spatial-feature` (small sample)
-2. **Type Extraction** → Identify available feature types
-3. **Filtered Loading** → GET `/spatial-feature` with type filters
-4. **Data Transformation** → Convert to OpenLayers features
-5. **Map Integration** → Add as vector layers
+1. **Authentication Check** → Verify user is authenticated
+2. **Layer Discovery** → GET `/spatial-feature` with proper filters
+3. **Type Extraction** → Identify available feature types from attributes
+4. **Layer Grouping** → Group by spatialFeature.type attribute values
+5. **Filtered Loading** → GET `/spatial-feature` with type and status filters
+6. **Data Transformation** → Convert to OpenLayers features
+7. **Map Integration** → Add as vector layers with proper naming
 
 ### Request/Response Pattern
 ```
@@ -176,9 +193,20 @@ State Update ← Transformer ← JSON Parse ← Raw Response
 
 ## Key Components
 
+### LayerLoadModal (`src/components/LayerLoadModal.tsx`)
+- **Dual Interface**: Local file loading and API-based layer loading
+- **Authentication State Management**: Real-time authentication status display
+- **Hierarchical Feature Grouping**: Organize features by type and refWilayah
+- **Auto-Login Integration**: Seamless authentication when accessing API tab
+- **State Synchronization**: Immediate UI updates after authentication
+- **Progress Tracking**: Real-time loading progress and error handling
+- **Responsive Design**: Scrollable interfaces with proper overflow handling
+
 ### SmartGovLoader (`src/components/api/SmartGovLoader.tsx`)
 - **Streamlined Interface**: Clean UI for API data loading
 - **Authentication Management**: Built-in login/logout functionality
+- **WIB Timezone Display**: Token expiration in Indonesia Western Time
+- **Auto-Login Behavior**: Automatic authentication on component mount
 - **Layer Discovery**: Automatic detection of available layer types
 - **Batch Loading**: Load multiple layer types simultaneously
 - **Progress Tracking**: Real-time loading progress and statistics
@@ -188,6 +216,7 @@ State Update ← Transformer ← JSON Parse ← Raw Response
 - **Pagination Control**: Navigate through large datasets
 - **Preview Table**: View results before loading as layers
 - **Direct Integration**: Load filtered results as map layers
+- **WIB Timezone Support**: Display timestamps in local timezone
 
 ### Data Loading Feature (`src/features/loadFromApi.ts`)
 - **WKT Conversion**: Convert API geometry to OpenLayers features
@@ -205,6 +234,56 @@ The application supports various spatial feature types identified by type codes:
 - **20000005**: Water Bodies
 - **20000006**: Vegetation
 - **20000007**: Points of Interest
+
+## Spatial Feature API Response Structure
+
+### JSON Response Format
+The spatial feature API returns a paginated response with the following structure:
+```json
+{
+  "total": 1500,
+  "pageNumber": 1,
+  "pageSize": 100,
+  "data": [
+    {
+      "id": "unique-region-code",
+      "systemId": "system-identifier",
+      "type": "feature-type",
+      "identifier": "feature-identifier",
+      "label": "feature-label",
+      "value": "feature-value",
+      "status": 1,
+      "attribute": [
+        {
+          "id": "attr-id",
+          "attributeKey": "spatialFeature.type",
+          "attributeLabel": "Type",
+          "attributeValue": "20000001",
+          "attributeValueType": "string"
+        },
+        {
+          "id": "attr-id-2",
+          "attributeKey": "spatialFeature.refWilayah",
+          "attributeLabel": "Region Reference",
+          "attributeValue": "Region Name",
+          "attributeValueType": "string"
+        }
+      ],
+      "description": "Feature description",
+      "createdBy": "creator",
+      "createdAt": "2025-01-01T00:00:00Z",
+      "updatedBy": "updater",
+      "updatedAt": "2025-01-01T00:00:00Z"
+    }
+  ]
+}
+```
+
+### Layer Grouping Logic
+- **Primary Grouping**: Features with same `spatialFeature.type` attribute value belong to same layer
+- **Layer Naming**: Use `attributeValue` from `spatialFeature.refWilayah` as layer name
+- **Status Filtering**: Only load features with `status = 1` (active)
+- **Dynamic Attributes**: New metadata added through FocusCard appears in attribute array
 
 ## Development Setup
 
@@ -238,11 +317,13 @@ The application supports various spatial feature types identified by type codes:
 5. Add transformers if needed
 
 ### Debugging API Issues
-1. Use the built-in ApiDebugger component
-2. Check authentication status in browser dev tools
-3. Verify network requests in browser dev tools
-4. Check API base URL configuration
-5. Validate token storage and expiry
+1. Use the built-in ApiDebugger component for comprehensive API testing
+2. Check authentication status in browser dev tools (localStorage and console)
+3. Verify network requests in browser dev tools for proper token attachment
+4. Check API base URL configuration for dev/prod environments
+5. Validate token storage and expiry with WIB timezone considerations
+6. Monitor authentication state synchronization between components
+7. Check browser console for detailed authentication debugging logs
 
 ### Adding New Map Layers from API
 1. Identify feature type code for new data
@@ -258,6 +339,7 @@ The API uses a key-value attribute system where spatial features contain:
 - **Core Attributes**: `spatialFeature.geometry`, `spatialFeature.type`, `spatialFeature.refWilayah`
 - **Custom Attributes**: Domain-specific data with arbitrary keys
 - **Metadata**: Creation/update timestamps, status information
+- **Dynamic Attributes**: User-added metadata through FocusCard interface
 
 ### Feature Normalization
 Transformers convert API responses to standardized format:
@@ -272,6 +354,14 @@ Transformers convert API responses to standardized format:
   original: SpatialRow
 }
 ```
+
+### Authentication State Management
+The authentication system provides comprehensive state management:
+- **Real-time Updates**: Components immediately reflect authentication changes
+- **Auto-Login**: Seamless authentication on app restart and API access
+- **WIB Timezone**: All timestamps displayed in Indonesia Western Time
+- **Error Recovery**: Automatic handling of token expiry and 401 errors
+- **Debugging Support**: Comprehensive logging for troubleshooting
 
 ## File Naming Conventions
 
@@ -292,11 +382,13 @@ Transformers convert API responses to standardized format:
 
 ## Testing
 
-- Development-only components for API testing
+- Development-only components for API testing (ApiDebugger)
 - Mock data support for offline development
-- Error boundary handling
+- Error boundary handling with detailed error reporting
 - Performance monitoring capabilities
-- Authentication flow testing
+- Authentication flow testing with state synchronization
+- Real-time authentication state debugging in browser console
+- WIB timezone testing for timestamp functionality
 
 ## Deployment
 
@@ -311,3 +403,5 @@ Transformers convert API responses to standardized format:
 **Last Updated**: October 2025
 **Project Version**: 0.0.0
 **Framework**: React 19.1.1 with TypeScript
+**Authentication System**: Enhanced with WIB timezone and state synchronization
+**Spatial Feature API**: Complete implementation with pagination and attribute handling

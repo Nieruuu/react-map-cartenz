@@ -165,6 +165,8 @@ export default function RightDock() {
       (entry.layer as any).changed?.();
     }
 
+    // Update tempName to reflect the saved name
+    setTempName(val);
     setExpandedId(null);
   };
 
@@ -408,7 +410,7 @@ export default function RightDock() {
                         style={{ cursor: "pointer" }}
                       >
                         <div className="rd-title" title={l.name}>
-                          {l.typeCode ? l.typeCode : l.name}
+                          {l.name}
                         </div>
                         <div className="rd-kind" title={l.kind}>
                           {l.kind}

@@ -10,7 +10,7 @@ import {
   transformSpatialRows,
   validateTransformedFeatures,
 } from "../lib/api/transformers";
-import { convertWKTToFeature } from "../lib/geo/wktConverter";
+import { simpleWKTToFeature } from "../lib/geo/simpleWKTConverter";
 import { API_BASE } from "../lib/api/client";
 
 interface DebugLog {
@@ -372,18 +372,17 @@ export default function ApiDebugger() {
       const startTime = Date.now();
       const testWKT =
         "POLYGON((107.0 -7.0, 108.0 -7.0, 108.0 -6.0, 107.0 -6.0, 107.0 -7.0))";
-      const result = convertWKTToFeature(testWKT, { name: "Test Feature" });
+      const feature = simpleWKTToFeature(testWKT, { name: "Test Feature" });
       const duration = Date.now() - startTime;
 
-      if (result.success && result.feature) {
+      if (feature) {
         tests[5] = {
           ...tests[5],
           status: "success",
           message: "WKT conversion successful",
           details: {
-            geometryType: result.geometryType,
-            warnings: result.warnings,
-            errors: result.errors,
+            geometryType: feature.getGeometry()?.getType(),
+            success: true,
           },
           duration,
         };
@@ -394,11 +393,14 @@ export default function ApiDebugger() {
           status: "error",
           message: "WKT conversion failed",
           details: {
-            errors: result.errors,
-            warnings: result.warnings,
+            error: "Simple WKT conversion failed",
           },
         };
-        addLog("error", "WKT conversion failed", result.errors);
+        addLog(
+          "error",
+          "WKT conversion failed",
+          "Simple WKT conversion failed"
+        );
       }
     } catch (error) {
       tests[5] = {
@@ -555,9 +557,7 @@ export default function ApiDebugger() {
                     <div>Token: {authState.token.substring(0, 20)}...</div>
                   )}
                   {authState?.expiresAt && (
-                    <div>
-                      Expires: {new Date(authState.expiresAt).toLocaleString()}
-                    </div>
+                    <div>Expires: {auth.getExpirationTimeDisplay()}</div>
                   )}
                 </div>
               </div>
@@ -831,10 +831,7 @@ export default function ApiDebugger() {
                         Token Length: {authState.token.length} characters
                       </div>
                       {authState.expiresAt && (
-                        <div>
-                          Expires At:{" "}
-                          {new Date(authState.expiresAt).toLocaleString()}
-                        </div>
+                        <div>Expires At: {auth.getExpirationTimeDisplay()}</div>
                       )}
                     </>
                   )}
