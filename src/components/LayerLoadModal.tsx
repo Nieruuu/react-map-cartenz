@@ -116,17 +116,66 @@ export default function LayerLoadModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // Check authentication status and auto-load API features when authenticated
+  // Check authentication status and auto-login when accessing API tab
   useEffect(() => {
-    const hasToken = !!auth.getToken();
-    setIsAuthenticated(hasToken);
+    const checkAndAutoLogin = async () => {
+      const authState = auth.getAuthState();
 
-    // Auto-switch to API tab and load features when authenticated
-    if (hasToken && Object.keys(featureGroups).length === 0) {
-      setTab("api");
-      loadAvailableFeatureGroups();
+      console.debug("LayerLoadModal checkAndAutoLogin initial state:", {
+        authState: authState.isAuthenticated,
+        hasToken: !!authState.token,
+        expiresAt: authState.expiresAt,
+        localIsAuthenticated: isAuthenticated,
+      });
+
+      // Update local state to match current auth state
+      setIsAuthenticated(authState.isAuthenticated);
+
+      // If not authenticated, try auto-login
+      if (!authState.isAuthenticated) {
+        try {
+          console.debug("LayerLoadModal attempting token request on open...");
+          const newAuthState = await auth.ensureAuthenticated(true);
+
+          // Update local state immediately
+          setIsAuthenticated(newAuthState.isAuthenticated);
+
+          console.debug("LayerLoadModal token request result:", {
+            newAuthState: newAuthState.isAuthenticated,
+            hasToken: !!newAuthState.token,
+            expiresAt: newAuthState.expiresAt,
+          });
+
+          // Auto-switch to API tab and load features after successful auto-login
+          if (
+            newAuthState.isAuthenticated &&
+            Object.keys(featureGroups).length === 0
+          ) {
+            setTab("api");
+            // Small delay to ensure state is updated
+            setTimeout(() => {
+              loadAvailableFeatureGroups();
+            }, 100);
+          }
+        } catch (error) {
+          console.warn("LayerLoadModal auto-login failed:", error);
+        }
+      } else if (Object.keys(featureGroups).length === 0) {
+        // Already authenticated, load features if needed
+        console.debug(
+          "LayerLoadModal already authenticated, loading features..."
+        );
+        setTab("api");
+        setTimeout(() => {
+          loadAvailableFeatureGroups();
+        }, 100);
+      }
+    };
+
+    if (open) {
+      checkAndAutoLogin();
     }
-  }, []);
+  }, [open, featureGroups, isAuthenticated, loadAvailableFeatureGroups]);
 
   // Load feature groups when tab switches to API and authenticated
   useEffect(() => {
@@ -135,9 +184,48 @@ export default function LayerLoadModal({
       isAuthenticated &&
       Object.keys(featureGroups).length === 0
     ) {
+      console.debug("LayerLoadModal tab changed to API, loading features...");
       loadAvailableFeatureGroups();
     }
-  }, [tab, isAuthenticated]);
+  }, [tab, isAuthenticated, featureGroups, loadAvailableFeatureGroups]);
+
+  // Monitor authentication state changes
+  useEffect(() => {
+    const checkAuthStatus = () => {
+      const authState = auth.getAuthState();
+      const wasAuthenticated = isAuthenticated;
+
+      // Update local state to match current auth state
+      setIsAuthenticated(authState.isAuthenticated);
+
+      // Debug logging for authentication state changes
+      console.debug("LayerLoadModal auth state check:", {
+        wasAuthenticated,
+        isAuthenticated: authState.isAuthenticated,
+        hasToken: !!authState.token,
+        expiresAt: authState.expiresAt,
+        isTokenExpired: auth.isTokenExpired(),
+      });
+
+      // If authentication state changed from false to true, load features
+      if (!wasAuthenticated && authState.isAuthenticated && tab === "api") {
+        console.debug(
+          "LayerLoadModal authentication state changed to true, loading features..."
+        );
+        setTimeout(() => {
+          loadAvailableFeatureGroups();
+        }, 100);
+      }
+    };
+
+    // Initial check
+    checkAuthStatus();
+
+    // Check auth status every 30 seconds to detect token expiration
+    const authCheckInterval = setInterval(checkAuthStatus, 30000);
+
+    return () => clearInterval(authCheckInterval);
+  }, [isAuthenticated, tab, loadAvailableFeatureGroups]);
 
   const hasData = items.length > 0;
 
@@ -178,7 +266,44 @@ export default function LayerLoadModal({
 
   // API Feature Group loading functions
   const loadAvailableFeatureGroups = useCallback(async () => {
-    if (!isAuthenticated) {
+    setApiLoadState({
+      isLoading: true,
+      message: "Preparing authentication...",
+    });
+
+    let authState = auth.getAuthState();
+    if (!authState.isAuthenticated) {
+      try {
+        console.debug(
+          "LayerLoadModal loadAvailableFeatureGroups requesting token..."
+        );
+        authState = await auth.ensureAuthenticated(true);
+      } catch (error) {
+        console.error(
+          "LayerLoadModal failed to request token while loading groups:",
+          error
+        );
+        setIsAuthenticated(false);
+        setApiLoadState({
+          isLoading: false,
+          message: `Authentication failed: ${
+            error instanceof Error ? error.message : "Unknown error"
+          }`,
+        });
+        return;
+      }
+    }
+
+    // Update local state after ensuring auth
+    setIsAuthenticated(authState.isAuthenticated);
+
+    console.debug("LayerLoadModal loadAvailableFeatureGroups auth check:", {
+      authState: authState.isAuthenticated,
+      hasToken: !!authState.token,
+      expiresAt: authState.expiresAt,
+    });
+
+    if (!authState.isAuthenticated) {
       setApiLoadState({
         isLoading: false,
         message: "Please authenticate to load layers",
@@ -258,14 +383,34 @@ export default function LayerLoadModal({
       });
     } catch (error) {
       console.error("Failed to load available feature groups:", error);
-      setApiLoadState({
-        isLoading: false,
-        message: `Failed to discover feature groups: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
-      });
+
+      // Check if error is authentication-related
+      if (
+        error instanceof Error &&
+        (error.message.includes("401") ||
+          error.message.includes("Unauthorized") ||
+          error.message.includes("authentication") ||
+          error.message.includes("token"))
+      ) {
+        setApiLoadState({
+          isLoading: false,
+          message: "Authentication expired. Please login again.",
+        });
+        setIsAuthenticated(false);
+        setFeatureGroups({});
+        setSelectedGroups([]);
+        setSelectedSubGroups([]);
+        setExpandedGroups(new Set());
+      } else {
+        setApiLoadState({
+          isLoading: false,
+          message: `Failed to discover feature groups: ${
+            error instanceof Error ? error.message : "Unknown error"
+          }`,
+        });
+      }
     }
-  }, [isAuthenticated]);
+  }, []);
 
   // Toggle group selection
   const toggleGroupSelection = (typeCode: string) => {
@@ -320,20 +465,53 @@ export default function LayerLoadModal({
   const handleApiAuth = async () => {
     try {
       setApiLoadState({ isLoading: true, message: "Authenticating..." });
-      await auth.login({ userIdentifier: "sa", password: "pass@word1" });
-      setIsAuthenticated(true);
+      const authState = await auth.login({
+        userIdentifier: "sa",
+        password: "pass@word1",
+      });
+
+      // Update local authentication state immediately
+      setIsAuthenticated(authState.isAuthenticated);
+
+      console.debug("LayerLoadModal handleApiAuth success:", {
+        authState: authState.isAuthenticated,
+        hasToken: !!authState.token,
+        expiresAt: authState.expiresAt,
+      });
+
       setApiLoadState({
         isLoading: false,
         message: "Authentication successful",
       });
-      // Auto-load layers after authentication
-      loadAvailableFeatureGroups();
+
+      // Auto-load layers after authentication with a small delay to ensure state is updated
+      setTimeout(() => {
+        loadAvailableFeatureGroups();
+      }, 100);
     } catch (error) {
+      setIsAuthenticated(false);
+      console.error("LayerLoadModal handleApiAuth failed:", error);
       setApiLoadState({
         isLoading: false,
         message: `Authentication failed: ${
           error instanceof Error ? error.message : "Unknown error"
         }`,
+      });
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await auth.logout();
+    } finally {
+      setIsAuthenticated(false);
+      setFeatureGroups({});
+      setSelectedGroups([]);
+      setSelectedSubGroups([]);
+      setExpandedGroups(new Set());
+      setApiLoadState({
+        isLoading: false,
+        message: "Logged out. Please authenticate to load layers.",
       });
     }
   };
@@ -418,12 +596,28 @@ export default function LayerLoadModal({
       setSelectedSubGroups([]);
     } catch (error) {
       console.error("Failed to load feature groups:", error);
-      setApiLoadState({
-        isLoading: false,
-        message: `Failed to load feature groups: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
-      });
+
+      // Check if error is authentication-related
+      if (
+        error instanceof Error &&
+        (error.message.includes("401") ||
+          error.message.includes("Unauthorized") ||
+          error.message.includes("authentication") ||
+          error.message.includes("token"))
+      ) {
+        setApiLoadState({
+          isLoading: false,
+          message: "Authentication expired during loading. Please login again.",
+        });
+        setIsAuthenticated(false);
+      } else {
+        setApiLoadState({
+          isLoading: false,
+          message: `Failed to load feature groups: ${
+            error instanceof Error ? error.message : "Unknown error"
+          }`,
+        });
+      }
     }
   };
 
@@ -642,15 +836,17 @@ export default function LayerLoadModal({
                     }}
                   >
                     {isAuthenticated
-                      ? "✓ Authenticated"
+                      ? `✓ Authenticated${
+                          auth.getExpirationTimeWIB()
+                            ? ` (expires ${auth.getExpirationTimeWIB()} WIB)`
+                            : ""
+                        }`
                       : "✗ Not authenticated"}
                   </div>
                 </div>
                 <button
                   className={isAuthenticated ? "btn ghost" : "btn primary"}
-                  onClick={
-                    isAuthenticated ? () => auth.logout() : handleApiAuth
-                  }
+                  onClick={isAuthenticated ? handleLogout : handleApiAuth}
                   disabled={apiLoadState.isLoading}
                 >
                   {isAuthenticated ? "Logout" : "Login"}
@@ -737,11 +933,10 @@ export default function LayerLoadModal({
                 <div
                   style={{
                     flex: 1,
-                    overflow: "auto",
                     border: "1px solid #e5e7eb",
                     borderRadius: 8,
                     minHeight: 0,
-                    maxHeight: "calc(min(45vh, 300px))",
+                    maxHeight: "min(45vh, 360px)",
                     overflowY: "auto",
                     overflowX: "hidden",
                   }}
@@ -753,6 +948,8 @@ export default function LayerLoadModal({
                     >
                       {/* Parent Group Row */}
                       <div
+                        role="button"
+                        tabIndex={0}
                         style={{
                           display: "flex",
                           alignItems: "center",
@@ -763,12 +960,23 @@ export default function LayerLoadModal({
                           cursor: "pointer",
                         }}
                         onClick={() => toggleGroupSelection(typeCode)}
+                        onKeyDown={(e) => {
+                          if (e.key === " " || e.key === "Enter") {
+                            e.preventDefault();
+                            toggleGroupSelection(typeCode);
+                          }
+                        }}
                       >
                         <input
                           type="checkbox"
                           checked={selectedGroups.includes(typeCode)}
-                          onChange={() => toggleGroupSelection(typeCode)}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            toggleGroupSelection(typeCode);
+                          }}
+                          onClick={(e) => e.stopPropagation()}
                           style={{ marginRight: 8 }}
+                          aria-label={`Select ${group.typeName}`}
                         />
                         <button
                           className="btn ghost"
@@ -820,6 +1028,8 @@ export default function LayerLoadModal({
                               return (
                                 <div
                                   key={subGroupKey}
+                                  role="button"
+                                  tabIndex={0}
                                   style={{
                                     display: "flex",
                                     alignItems: "center",
@@ -838,19 +1048,31 @@ export default function LayerLoadModal({
                                       refWilayah
                                     )
                                   }
+                                  onKeyDown={(e) => {
+                                    if (e.key === " " || e.key === "Enter") {
+                                      e.preventDefault();
+                                      toggleSubGroupSelection(
+                                        typeCode,
+                                        refWilayah
+                                      );
+                                    }
+                                  }}
                                 >
                                   <input
                                     type="checkbox"
                                     checked={selectedSubGroups.includes(
                                       subGroupKey
                                     )}
-                                    onChange={() =>
+                                    onChange={(e) => {
+                                      e.stopPropagation();
                                       toggleSubGroupSelection(
                                         typeCode,
                                         refWilayah
-                                      )
-                                    }
+                                      );
+                                    }}
+                                    onClick={(e) => e.stopPropagation()}
                                     style={{ marginRight: 8 }}
+                                    aria-label={`Select ${refWilayah}`}
                                   />
                                   <div style={{ flex: 1 }}>
                                     <div
