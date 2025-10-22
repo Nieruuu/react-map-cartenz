@@ -4,27 +4,17 @@ import { createPortal } from "react-dom";
 import { fromLonLat } from "ol/proj";
 import { useMapStore } from "../hooks/useMapStore";
 import { useMetadataEditor } from "../hooks/useMetadataEditor";
-import type { SpatialFeature } from "../lib/api/spatialFeature";
-
-type KV = { id: string; key: string; value: string; locked?: boolean };
-
-// Jangan pernah izinkan kunci ini muncul / disimpan
-const RESERVED_KEYS = new Set([
-  "geometry",
-  "geom",
-  "the_geom",
-  "_geom",
-  "id",
-  "ID",
-  "name",
-  "NAME",
-]);
-
-type Pair = { codeKey: string; nameKey: string; official: boolean };
+import type {
+  SpatialFeature,
+  SpatialFeatureAttribute,
+} from "../lib/api/spatialFeature";
 
 export default function FocusCard() {
   const { focus, setFocus } = useMapStore();
   const metadataEditor = useMetadataEditor();
+
+  // Track when the metadata editor has been populated with fresh data
+  const editorInitializedRef = useRef(false);
 
   // Ref to track if FocusCard should auto-close
   const shouldAutoCloseRef = useRef(true);
@@ -66,7 +56,73 @@ export default function FocusCard() {
     [focus, setFocus]
   );
 
-  // Set up event listeners for auto-close
+  const syncFocusWithProps = useCallback(
+    (props: Record<string, any> | undefined, resolvedLayerId: string) => {
+      if (!props || !focus || typeof focus !== "object") {
+        return;
+      }
+
+      let updatedName = (focus as any)?.name || "";
+      let updatedId = (focus as any)?.id || "";
+
+      if (props.id !== undefined) {
+        updatedId = String(props.id);
+      }
+
+      if (props._rawAttributes && Array.isArray(props._rawAttributes)) {
+        const refWilayahAttr = props._rawAttributes.find(
+          (attr: any) =>
+            attr.attributeKey === "spatialFeature.refWilayah"
+        );
+        if (refWilayahAttr) {
+          updatedName = refWilayahAttr.attributeValue || updatedName;
+          console.log(
+            "FocusCard: Updated name from spatialFeature.refWilayah:",
+            updatedName
+          );
+        }
+      }
+
+      if (props.name && typeof props.name === "string") {
+        updatedName = props.name;
+        console.log(
+          "FocusCard: Updated name from direct property:",
+          updatedName
+        );
+      }
+
+      const updatedFocus = {
+        ...(focus as any),
+        name: updatedName,
+        id: updatedId,
+        layerId: resolvedLayerId,
+        _rawAttributes:
+          props._rawAttributes || (focus as any)._rawAttributes,
+        ...(props.geometry && { geom: props.geometry }),
+        ...(props.lon && { lon: props.lon }),
+        ...(props.lat && { lat: props.lat }),
+      };
+
+      console.log("FocusCard: Applying fresh props to focus", {
+        oldName: (focus as any)?.name,
+        newName: updatedName,
+        layerId: resolvedLayerId,
+        hasNewGeometry: !!props.geometry,
+        hasNewCoords: !!(props.lon && props.lat),
+        hasRawAttributes: !!props._rawAttributes,
+      });
+
+      setFocus(updatedFocus);
+
+      // Force a re-render by triggering a state update
+      setTimeout(() => {
+        console.log("FocusCard: Force re-render after focus update");
+      }, 50);
+    },
+    [focus, setFocus]
+  );
+
+  // Set up event listeners for auto-close and focus refresh
   useEffect(() => {
     if (!focus) return;
 
@@ -102,6 +158,101 @@ export default function FocusCard() {
       }
     };
 
+    // Listen for layer reload completion to refresh the main FocusCard display
+    const onLayerReloadedForFocusRefresh = (ev: Event) => {
+      const {
+        originalLayerId,
+        newLayerId,
+        featureId,
+        props,
+      } = (ev as CustomEvent<any>).detail || {};
+
+      console.log("FocusCard: onLayerReloadedForFocusRefresh event received", {
+        originalLayerId,
+        newLayerId,
+        featureId,
+        currentFocusId: (focus as any)?.id,
+        currentFocusLayerId: (focus as any)?.layerId,
+      });
+
+      const currentFocusId = String((focus as any)?.id ?? "");
+      const eventFeatureId = String(featureId ?? "");
+      const currentFocusLayerId = String((focus as any)?.layerId ?? "");
+      const originalLayerIdStr = String(originalLayerId ?? "");
+      const newLayerIdStr = String(newLayerId ?? "");
+      const resolvedLayerId =
+        newLayerIdStr || originalLayerIdStr || currentFocusLayerId;
+      const layerMatches =
+        currentFocusLayerId !== "" &&
+        (currentFocusLayerId === originalLayerIdStr ||
+          currentFocusLayerId === newLayerIdStr);
+
+      // Check if this reload affects the currently focused feature
+      if (currentFocusId && eventFeatureId && currentFocusId === eventFeatureId && layerMatches) {
+        console.log(
+          "FocusCard: Layer reload affects current focus, refreshing focus data"
+        );
+
+        if (props) {
+          syncFocusWithProps(props, resolvedLayerId);
+        }
+
+        // Request fresh feature data to update the main FocusCard display
+        const requestFeatureProps = () => {
+          console.log(
+            "FocusCard: Requesting fresh feature props for main display",
+            {
+              featureId,
+              layerId: resolvedLayerId,
+            }
+          );
+
+          const onPropsResponse = (ev: Event) => {
+            const {
+              id: rid,
+              layerId: rlayer,
+              props,
+            } = (ev as CustomEvent<any>).detail || {};
+
+            if (
+              String(rid ?? "") === eventFeatureId &&
+              String(rlayer ?? "") === resolvedLayerId
+            ) {
+              console.log("FocusCard: Received fresh props for main display", {
+                featureId: rid,
+                layerId: rlayer,
+                hasRawAttributes: !!(props && props._rawAttributes),
+              });
+
+              const p: Record<string, any> = props || {};
+
+              // Extract the updated name from the fresh data
+              syncFocusWithProps(p, resolvedLayerId);
+            }
+          };
+
+          // Set up one-time listener for the response
+          window.addEventListener(
+            "feature-props-response",
+            onPropsResponse as any,
+            {
+              once: true,
+            }
+          );
+
+          // Dispatch the request
+          window.dispatchEvent(
+            new CustomEvent("request-feature-props", {
+              detail: { id: featureId, layerId: resolvedLayerId },
+            })
+          );
+        };
+
+        // Small delay to ensure the layer is fully reloaded
+        setTimeout(requestFeatureProps, 400);
+      }
+    };
+
     // Add event listeners
     document.addEventListener("click", handleClick, true);
     document.addEventListener("mousedown", handleClick, true);
@@ -118,6 +269,10 @@ export default function FocusCard() {
     window.addEventListener("open-right-dock", handleCustomEvent);
     window.addEventListener("open-modal", handleCustomEvent);
     window.addEventListener("panel-header-click", handleCustomEvent);
+    window.addEventListener(
+      "layer-reloaded-for-focus-refresh",
+      onLayerReloadedForFocusRefresh
+    );
 
     return () => {
       document.removeEventListener("click", handleClick, true);
@@ -127,14 +282,19 @@ export default function FocusCard() {
       window.removeEventListener("open-right-dock", handleCustomEvent);
       window.removeEventListener("open-modal", handleCustomEvent);
       window.removeEventListener("panel-header-click", handleCustomEvent);
+      window.removeEventListener(
+        "layer-reloaded-for-focus-refresh",
+        onLayerReloadedForFocusRefresh
+      );
     };
-  }, [focus, handleOutsideInteraction, setFocus]);
+  }, [focus, handleOutsideInteraction, setFocus, syncFocusWithProps]);
 
   const openEditor = () => {
     if (!focus) return;
 
     // Disable auto-close while editing
     shouldAutoCloseRef.current = false;
+    editorInitializedRef.current = false;
 
     // Request feature properties to get the full feature data
     const openIdRef = { current: (focus as any)?.id || null };
@@ -149,38 +309,119 @@ export default function FocusCard() {
       if (rid !== openIdRef.current || rlayer !== openLayerIdRef.current)
         return;
 
+      console.log("FocusCard: Received feature props response", {
+        featureId: rid,
+        layerId: rlayer,
+        hasRawAttributes: !!(props && props._rawAttributes),
+      });
+
       const p: Record<string, any> = props || {};
+      const featureIdNumeric = Number((focus as any)?.id || 0);
+
+      const normalizeAttribute = (
+        attr: Partial<SpatialFeatureAttribute> & {
+          attributeKey: string;
+          attributeValue?: string;
+        },
+        index: number
+      ): SpatialFeatureAttribute => ({
+        id:
+          attr.id !== undefined
+            ? Number(attr.id)
+            : Number(`${Date.now()}${index}`),
+        dataType: attr.dataType ?? 1,
+        rowIdentifier:
+          attr.rowIdentifier !== undefined
+            ? Number(attr.rowIdentifier)
+            : featureIdNumeric,
+        groupIdentifier:
+          attr.groupIdentifier !== undefined ? attr.groupIdentifier : null,
+        attributeIndex:
+          attr.attributeIndex !== undefined
+            ? Number(attr.attributeIndex)
+            : index,
+        attributeKey: attr.attributeKey,
+        attributeLabel: attr.attributeLabel || attr.attributeKey,
+        attributeValue: attr.attributeValue ?? "",
+        attributeValueType: attr.attributeValueType ?? 1,
+        status: attr.status ?? 1,
+      });
 
       // Extract Nama Wilayah from spatialFeature.refWilayah attribute
       let namaWilayah = "";
       let idWilayah = "";
 
+      let attributeList: SpatialFeatureAttribute[] = [];
+
       // Handle API-loaded features with attribute structure
-      const attributes: any[] = [];
-      if (p._rawAttributes && Array.isArray(p._rawAttributes)) {
-        p._rawAttributes.forEach((attr: any) => {
-          if (attr.attributeKey === "spatialFeature.refWilayah") {
-            namaWilayah = attr.attributeValue || "";
-          } else {
-            // Add all attributes except spatialFeature.refWilayah
-            attributes.push({
-              id: attr.id,
-              attributeKey: attr.attributeKey,
-              attributeValue: attr.attributeValue,
-              attributeLabel: attr.attributeLabel || attr.attributeKey,
-              attributeValueType: attr.attributeValueType || 1,
+      if (Array.isArray(p._rawAttributes) && p._rawAttributes.length) {
+        console.log(
+          "FocusCard: Processing _rawAttributes",
+          p._rawAttributes.length
+        );
+        attributeList = p._rawAttributes.map((attr: any, idx: number) => {
+          if (
+            attr.attributeKey === "spatialFeature.refWilayah" &&
+            attr.attributeValue
+          ) {
+            namaWilayah = attr.attributeValue;
+            console.log(
+              "FocusCard: Extracted namaWilayah from spatialFeature.refWilayah:",
+              namaWilayah
+            );
+          }
+          return normalizeAttribute(attr, idx);
+        });
+      } else {
+        // Build minimal attribute structure when raw attributes are not available
+        const supplementalAttributes: Array<
+          Partial<SpatialFeatureAttribute> & { attributeKey: string }
+        > = [];
+
+        Object.keys(p).forEach((key) => {
+          const value = p[key];
+          if (key === "spatialFeature.refWilayah" && typeof value === "string") {
+            namaWilayah = value;
+            console.log(
+              "FocusCard: Extracted namaWilayah from direct attribute:",
+              namaWilayah
+            );
+          } else if (
+            key.startsWith("spatialFeature.") &&
+            typeof value === "string"
+          ) {
+            supplementalAttributes.push({
+              attributeKey: key,
+              attributeValue: value,
+              attributeLabel: key,
             });
           }
         });
-      }
 
-      // Handle direct attribute structure
-      if (p["spatialFeature.refWilayah"]) {
-        namaWilayah = p["spatialFeature.refWilayah"];
+        attributeList = [
+          normalizeAttribute(
+            {
+              attributeKey: "spatialFeature.refWilayah",
+              attributeLabel: "spatialFeature.refWilayah",
+              attributeValue: namaWilayah,
+            },
+            0
+          ),
+          ...supplementalAttributes.map((attr, idx) =>
+            normalizeAttribute(attr, idx + 1)
+          ),
+        ];
       }
 
       // Extract ID wilayah from id field (not uuid/value field)
       idWilayah = p.id || String((focus as any)?.id || "");
+
+      console.log("FocusCard: Creating SpatialFeature with data", {
+        id: (focus as any)?.id || 0,
+        namaWilayah,
+        idWilayah,
+        attributeCount: attributeList.length,
+      });
 
       // Create a SpatialFeature object from the focus data
       const spatialFeature: SpatialFeature = {
@@ -191,7 +432,7 @@ export default function FocusCard() {
         label: "",
         value: "",
         status: 1,
-        attribute: attributes,
+        attribute: attributeList,
         description: "",
         createdBy: "",
         createdAt: 0,
@@ -201,6 +442,7 @@ export default function FocusCard() {
 
       // Start editing with the metadata editor hook
       metadataEditor.actions.startEditing(spatialFeature);
+      editorInitializedRef.current = true;
     };
 
     const requestFeatureProps = (
@@ -248,35 +490,61 @@ export default function FocusCard() {
       if (rid !== openIdRef.current || rlayer !== openLayerIdRef.current)
         return;
 
+      console.log("FocusCard: onPropsApplied event received", {
+        featureId: rid,
+        layerId: rlayer,
+      });
+
       // Re-enable auto-close after successful save
       shouldAutoCloseRef.current = true;
       setToast({ type: "success", msg: "Metadata berhasil disimpan." });
 
-      // Refresh the focus data to show updated values
-      setTimeout(() => {
-        requestFeatureProps(rlayer, rid);
-      }, 100);
+      // Don't immediately refresh here - wait for layer reload to complete
+      // The layer reload will trigger a fresh data fetch
+      console.log(
+        "FocusCard: Waiting for layer reload to complete before refreshing data"
+      );
     };
 
     // Listen for layer reload completion to refresh focus data
     const onLayerReloaded = (ev: Event) => {
-      const { originalLayerId, newLayerId, featureId } =
+      const { originalLayerId, newLayerId, featureId, props } =
         (ev as CustomEvent<any>).detail || {};
 
-      // Check if this is the layer we're interested in
-      if (originalLayerId !== openLayerIdRef.current) return;
+      console.log("FocusCard: onLayerReloaded event received", {
+        originalLayerId,
+        newLayerId,
+        featureId,
+        currentLayerId: openLayerIdRef.current,
+        currentFeatureId: openIdRef.current,
+      });
 
-      if (newLayerId) {
-        openLayerIdRef.current = newLayerId;
+      const currentLayerIdStr = String(openLayerIdRef.current ?? "");
+      const originalLayerIdStr = String(originalLayerId ?? "");
+      const newLayerIdStr = String(newLayerId ?? "");
+      const featureIdStr = String(featureId ?? "");
+
+      // Check if this is the layer we're interested in
+      if (currentLayerIdStr && currentLayerIdStr !== originalLayerIdStr) return;
+
+      if (newLayerIdStr) {
+        openLayerIdRef.current = newLayerIdStr;
       }
-      if (featureId) {
-        openIdRef.current = featureId;
+      if (featureIdStr) {
+        openIdRef.current = featureIdStr;
+      }
+
+      if (props) {
+        syncFocusWithProps(props, newLayerIdStr || originalLayerIdStr);
       }
 
       // Refresh the focus data with the new layer data
       setTimeout(() => {
-        requestFeatureProps(newLayerId || originalLayerId, featureId);
-      }, 200); // Slightly longer delay to ensure layer is fully reloaded
+        console.log(
+          "FocusCard: Requesting fresh feature props after layer reload"
+        );
+        requestFeatureProps(newLayerIdStr || originalLayerIdStr, featureIdStr);
+      }, 300); // Slightly longer delay to ensure layer is fully reloaded
     };
 
     const onPropsError = (ev: Event) => {
@@ -293,22 +561,32 @@ export default function FocusCard() {
 
     window.addEventListener("feature-props-applied", onPropsApplied as any);
     window.addEventListener("feature-props-error", onPropsError as any);
-    window.addEventListener("layer-reloaded", onLayerReloaded as any);
+    window.addEventListener(
+      "layer-reloaded-for-focus-refresh",
+      onLayerReloaded as any
+    );
 
     requestFeatureProps();
 
     // fallback supaya gak loading abadi
     setTimeout(() => {
       // If no response, start editing with basic data
-      if (!metadataEditor.state.isEditing) {
+      if (!editorInitializedRef.current) {
         const namaWilayah = String((focus as any)?.name || "");
-        const attributes: any[] = [
+        const buildFallbackAttributes = (
+          nama: string
+        ): SpatialFeatureAttribute[] => [
           {
-            id: 0, // Temporary ID
+            id: Number(`${Date.now()}0`),
+            dataType: 1,
+            rowIdentifier: Number((focus as any)?.id || 0),
+            groupIdentifier: null,
+            attributeIndex: 0,
             attributeKey: "spatialFeature.refWilayah",
-            attributeValue: namaWilayah,
             attributeLabel: "spatialFeature.refWilayah",
+            attributeValue: nama,
             attributeValueType: 1,
+            status: 1,
           },
         ];
 
@@ -320,7 +598,7 @@ export default function FocusCard() {
           label: "",
           value: "",
           status: 1,
-          attribute: attributes,
+          attribute: buildFallbackAttributes(namaWilayah),
           description: "",
           createdBy: "",
           createdAt: 0,
@@ -329,6 +607,7 @@ export default function FocusCard() {
         };
 
         metadataEditor.actions.startEditing(spatialFeature);
+        editorInitializedRef.current = true;
       }
     }, 900);
 
@@ -340,7 +619,10 @@ export default function FocusCard() {
         onPropsApplied as any
       );
       window.removeEventListener("feature-props-error", onPropsError as any);
-      window.removeEventListener("layer-reloaded", onLayerReloaded as any);
+      window.removeEventListener(
+        "layer-reloaded-for-focus-refresh",
+        onLayerReloaded as any
+      );
     };
   };
 

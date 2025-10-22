@@ -31,7 +31,7 @@ export async function addApiLayer(opts: {
   // Transform features using the transformer with simplified options
   const transformOptions: TransformOptions = {
     includeSystemFields: opts.includeSystemFields || false, // Default to false for QGIS compatibility
-    includeRawAttributes: false,
+    includeRawAttributes: true, // Include _rawAttributes for FocusCard editing
     flattenAttributes: true,
   };
   
@@ -120,7 +120,7 @@ export async function addApiLayersByType(opts: {
     // Use the transformer to properly handle the features with only id and name
     const transformOptions: TransformOptions = {
       includeSystemFields: false, // Only include id and name
-      includeRawAttributes: false,
+      includeRawAttributes: true, // Include _rawAttributes for FocusCard editing
       flattenAttributes: true,
     };
     

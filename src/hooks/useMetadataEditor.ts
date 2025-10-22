@@ -5,8 +5,6 @@ import type {
 } from '../lib/api/spatialFeature';
 import {
   updateSpatialFeature,
-  addSpatialFeatureAttribute,
-  deleteSpatialFeatureAttribute,
   getSpatialFeatureById
 } from '../lib/api/spatialFeature';
 import { HttpError } from '../lib/api/client';

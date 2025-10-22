@@ -422,10 +422,15 @@ export function addAttributeToTransformedFeature(
     const originalFeature = feature.original as SpatialFeature;
     const newAttribute: SpatialFeatureAttribute = {
       id: Date.now(), // Use timestamp as temporary ID
+      dataType: 1,
+      rowIdentifier: originalFeature.id,
+      groupIdentifier: null,
+      attributeIndex: (originalFeature.attribute || []).length,
       attributeKey,
       attributeLabel: attributeLabel || attributeKey,
       attributeValue,
       attributeValueType: 1, // Default to string type
+      status: 1,
     };
 
     const updatedOriginal = {

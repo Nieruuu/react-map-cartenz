@@ -77,7 +77,7 @@ export default function RightDock() {
 
     // Handle UI synchronization completion
     const handleUISynchronizationComplete = (event: Event) => {
-      const { layerId, originalLayerId, featureId, components } =
+      const { layerId, originalLayerId, components } =
         (event as CustomEvent<any>).detail || {};
       console.log(
         `UI synchronization complete for layer ${layerId}, components: ${components?.join(

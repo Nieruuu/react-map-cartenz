@@ -1383,6 +1383,8 @@ export default function TaxMap() {
       const { id, layerId } = (ev as CustomEvent<any>).detail || {};
       if (!id) return;
 
+      console.log("TaxMap: onRequestProps called", { id, layerId });
+
       const st = useLayersStore.getState();
       const targets = layerId
         ? st.layers.filter((l) => l.id === layerId)
@@ -1390,6 +1392,7 @@ export default function TaxMap() {
 
       let props: Record<string, any> = {};
       let foundFeature: any = null;
+      let foundLayerId: string | null = null;
 
       for (const le of targets) {
         const src = (le.layer as VectorLayer<VectorSource>).getSource?.();
@@ -1402,6 +1405,7 @@ export default function TaxMap() {
         const { geometry, geom, the_geom, _geom, ...rest } = raw as any;
         props = rest;
         foundFeature = ft;
+        foundLayerId = le.id;
         break;
       }
 
@@ -1410,9 +1414,32 @@ export default function TaxMap() {
         props._rawAttributes = foundFeature.get("_rawAttributes");
       }
 
+      // Add geometry information for coordinate updates
+      if (foundFeature) {
+        const geom = foundFeature.getGeometry() as Geometry;
+        if (geom) {
+          const p3857 = bestPointForStreetView(geom);
+          const [lon, lat] = toLonLat(p3857);
+          const geom4326 = geom.clone().transform("EPSG:3857", "EPSG:4326");
+
+          props.lon = lon;
+          props.lat = lat;
+          props.geometry = new GeoJSON().writeGeometryObject(geom4326);
+        }
+      }
+
+      console.log("TaxMap: Sending feature-props-response", {
+        id,
+        layerId: foundLayerId || layerId,
+        hasRawAttributes: !!props._rawAttributes,
+        hasGeometry: !!props.geometry,
+        hasCoords: !!(props.lon && props.lat),
+        name: props.name,
+      });
+
       window.dispatchEvent(
         new CustomEvent("feature-props-response", {
-          detail: { id, layerId, props },
+          detail: { id, layerId: foundLayerId || layerId, props },
         })
       );
     };
@@ -1757,7 +1784,7 @@ export default function TaxMap() {
           currentFocus &&
           typeof currentFocus === "object" &&
           "id" in currentFocus &&
-          currentFocus.id === featureId;
+          String(currentFocus.id) === String(featureId);
 
         // Find the existing layer in the store
         const { layers, map, removeEntry } = useLayersStore.getState();
@@ -1832,10 +1859,16 @@ export default function TaxMap() {
 
         // Find the newly created layer and restore properties
         const { layers: newLayers } = useLayersStore.getState();
-        const newLayer = newLayers.find(
-          (l) =>
-            l.kind === layerProperties.kind && l.name === layerProperties.name
+        const createdLayerInfo = layerResults.find(
+          (layer) => layer.typeCode === typeCode
         );
+        const newLayer = createdLayerInfo
+          ? newLayers.find((l) => l.id === createdLayerInfo.id)
+          : newLayers.find(
+              (l) =>
+                l.kind === layerProperties.kind &&
+                l.name === layerProperties.name
+            );
 
         if (newLayer) {
           console.log(`Restoring properties for new layer ${newLayer.id}`);
@@ -1865,8 +1898,24 @@ export default function TaxMap() {
                   );
 
                 if (feature) {
-                  const name =
+                  // Get the updated name from _rawAttributes first, then fallback to feature property
+                  let name =
                     String(feature.get("name") || "") || `Feature ${featureId}`;
+
+                  const rawAttributes = feature.get("_rawAttributes");
+                  if (rawAttributes && Array.isArray(rawAttributes)) {
+                    const refWilayahAttr = rawAttributes.find(
+                      (attr: any) =>
+                        attr.attributeKey === "spatialFeature.refWilayah"
+                    );
+                    if (refWilayahAttr && refWilayahAttr.attributeValue) {
+                      name = refWilayahAttr.attributeValue;
+                      console.log(
+                        `TaxMap: Updated name from _rawAttributes: ${name}`
+                      );
+                    }
+                  }
+
                   const geom = feature.getGeometry();
 
                   if (geom) {
@@ -1896,12 +1945,14 @@ export default function TaxMap() {
                           ?.writeGeometryObject?.(
                             geom.clone().transform("EPSG:3857", "EPSG:4326")
                           ) || {},
+                      // Include _rawAttributes for FocusCard
+                      _rawAttributes: rawAttributes,
                     });
 
                     setSelectedId(featureId);
 
                     console.log(
-                      `Restored focus for feature ${featureId} in reloaded layer`
+                      `Restored focus for feature ${featureId} in reloaded layer with name: ${name}`
                     );
                   }
                 }
@@ -1973,13 +2024,22 @@ export default function TaxMap() {
 
     // Handle layer reload success events
     const onLayerReloaded = (ev: Event) => {
-      const { originalLayerId, newLayerId, featureId } =
-        (ev as CustomEvent<any>).detail || {};
+      const {
+        originalLayerId,
+        newLayerId,
+        featureId,
+        typeCode,
+        forceRefresh,
+        updateUI,
+      } = (ev as CustomEvent<any>).detail || {};
 
       console.log(`Layer reloaded: ${originalLayerId} -> ${newLayerId}`);
 
       // If the currently selected feature was in the reloaded layer, update the focus
-      if (selectedId && featureId === selectedId) {
+      if (
+        selectedId &&
+        String(featureId ?? "") === String(selectedId ?? "")
+      ) {
         // Find the feature in the new layer
         const st = useLayersStore.getState();
         const newLayerEntry = st.layers.find((l) => l.id === newLayerId);
@@ -2002,6 +2062,11 @@ export default function TaxMap() {
               const p3857 = bestPointForStreetView(geom);
               const [lon, lat] = toLonLat(p3857);
               const geom4326 = geom.clone().transform("EPSG:3857", "EPSG:4326");
+              const rawAttributes = feature.get("_rawAttributes");
+              const geoJsonWriter = new GeoJSON();
+              const geometryObject = geoJsonWriter.writeGeometryObject(
+                geom4326
+              );
 
               // Update focus with fresh data
               setFocus({
@@ -2010,7 +2075,8 @@ export default function TaxMap() {
                 lon,
                 lat,
                 layerId: newLayerId,
-                geom: new GeoJSON().writeGeometryObject(geom4326),
+                geom: geometryObject,
+                _rawAttributes: rawAttributes,
               });
 
               // Update selected layer ID
@@ -2020,14 +2086,28 @@ export default function TaxMap() {
                 `Updated focus for feature ${featureId} with fresh data`
               );
 
-              // Notify FocusCard to refresh its display
+              // Notify FocusCard with refreshed data payload so it can update immediately
+              const refreshedProps = {
+                id: String(featureId),
+                layerId: newLayerId,
+                name,
+                lon,
+                lat,
+                geometry: geometryObject,
+                _rawAttributes: rawAttributes,
+              };
+
               window.dispatchEvent(
-                new CustomEvent("feature-data-refreshed", {
+                new CustomEvent("layer-reloaded-for-focus-refresh", {
                   detail: {
                     id: featureId,
                     layerId: newLayerId,
                     originalLayerId,
                     newLayerId,
+                    typeCode,
+                    forceRefresh,
+                    updateUI,
+                    props: refreshedProps,
                   },
                 })
               );
@@ -2082,7 +2162,7 @@ export default function TaxMap() {
 
     // Handle UI synchronization completion
     const handleUISynchronizationComplete = (event: Event) => {
-      const { layerId, originalLayerId, featureId, components } =
+      const { layerId, components } =
         (event as CustomEvent<any>).detail || {};
       console.log(
         `TaxMap UI synchronization complete for layer ${layerId}, components: ${components?.join(
