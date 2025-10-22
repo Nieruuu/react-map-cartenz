@@ -71,8 +71,7 @@ export default function FocusCard() {
 
       if (props._rawAttributes && Array.isArray(props._rawAttributes)) {
         const refWilayahAttr = props._rawAttributes.find(
-          (attr: any) =>
-            attr.attributeKey === "spatialFeature.refWilayah"
+          (attr: any) => attr.attributeKey === "spatialFeature.refWilayah"
         );
         if (refWilayahAttr) {
           updatedName = refWilayahAttr.attributeValue || updatedName;
@@ -96,8 +95,7 @@ export default function FocusCard() {
         name: updatedName,
         id: updatedId,
         layerId: resolvedLayerId,
-        _rawAttributes:
-          props._rawAttributes || (focus as any)._rawAttributes,
+        _rawAttributes: props._rawAttributes || (focus as any)._rawAttributes,
         ...(props.geometry && { geom: props.geometry }),
         ...(props.lon && { lon: props.lon }),
         ...(props.lat && { lat: props.lat }),
@@ -160,12 +158,8 @@ export default function FocusCard() {
 
     // Listen for layer reload completion to refresh the main FocusCard display
     const onLayerReloadedForFocusRefresh = (ev: Event) => {
-      const {
-        originalLayerId,
-        newLayerId,
-        featureId,
-        props,
-      } = (ev as CustomEvent<any>).detail || {};
+      const { originalLayerId, newLayerId, featureId, props } =
+        (ev as CustomEvent<any>).detail || {};
 
       console.log("FocusCard: onLayerReloadedForFocusRefresh event received", {
         originalLayerId,
@@ -188,7 +182,12 @@ export default function FocusCard() {
           currentFocusLayerId === newLayerIdStr);
 
       // Check if this reload affects the currently focused feature
-      if (currentFocusId && eventFeatureId && currentFocusId === eventFeatureId && layerMatches) {
+      if (
+        currentFocusId &&
+        eventFeatureId &&
+        currentFocusId === eventFeatureId &&
+        layerMatches
+      ) {
         console.log(
           "FocusCard: Layer reload affects current focus, refreshing focus data"
         );
@@ -380,7 +379,10 @@ export default function FocusCard() {
 
         Object.keys(p).forEach((key) => {
           const value = p[key];
-          if (key === "spatialFeature.refWilayah" && typeof value === "string") {
+          if (
+            key === "spatialFeature.refWilayah" &&
+            typeof value === "string"
+          ) {
             namaWilayah = value;
             console.log(
               "FocusCard: Extracted namaWilayah from direct attribute:",
@@ -642,9 +644,71 @@ export default function FocusCard() {
         Array.isArray((focus as any)._rawAttributes);
 
       if (isApiFeature) {
-        // Trigger the apply-feature-props event to let TaxMap handle the save
+        // Prepare updates and immediately update the focus
         const updates: Record<string, any> = {};
         const deletes: string[] = [];
+
+        // Create the updated attributes array preserving all metadata
+        const updatedAttributes = metadataEditor.state.editableAttributes.map(
+          (attr, idx) => {
+            // Get original attribute if it exists
+            const originalAttr = (focus as any)?._rawAttributes?.find(
+              (raw: any) => raw.attributeKey === attr.attributeKey
+            );
+
+            // Preserve all metadata from original attribute or create new complete attribute
+            return {
+              id: originalAttr?.id || Number(`${Date.now()}${idx}`),
+              dataType: originalAttr?.dataType ?? 1,
+              rowIdentifier:
+                originalAttr?.rowIdentifier ?? (focus as any)?.id ?? 0,
+              groupIdentifier: originalAttr?.groupIdentifier ?? null,
+              attributeIndex: originalAttr?.attributeIndex ?? idx,
+              attributeKey: attr.attributeKey,
+              attributeLabel: attr.attributeLabel || attr.attributeKey,
+              attributeValue: attr.attributeValue,
+              attributeValueType: originalAttr?.attributeValueType ?? 1,
+              status: originalAttr?.status ?? 1,
+            };
+          }
+        );
+
+        // Make sure to include spatialFeature.refWilayah in attributes
+        const refWilayahAttr = {
+          id: Number(`${Date.now()}${updatedAttributes.length}`),
+          dataType: 1,
+          rowIdentifier: (focus as any)?.id ?? 0,
+          groupIdentifier: null,
+          attributeIndex: updatedAttributes.length,
+          attributeKey: "spatialFeature.refWilayah",
+          attributeLabel: "spatialFeature.refWilayah",
+          attributeValue: metadataEditor.state.namaWilayah,
+          attributeValueType: 1,
+          status: 1,
+        };
+
+        // Preserve all existing attributes and override with updates
+        const allAttributes = [
+          refWilayahAttr,
+          ...updatedAttributes,
+          // Keep system attributes that weren't edited
+          ...((focus as any)?._rawAttributes || []).filter(
+            (attr: any) =>
+              attr.attributeKey.startsWith("spatialFeature.") &&
+              attr.attributeKey !== "spatialFeature.refWilayah" &&
+              !updatedAttributes.some(
+                (ua) => ua.attributeKey === attr.attributeKey
+              )
+          ),
+        ];
+
+        // Immediately update the focus with new attributes
+        const updatedFocus = {
+          ...(focus as any),
+          name: metadataEditor.state.namaWilayah,
+          _rawAttributes: allAttributes,
+        };
+        setFocus(updatedFocus);
 
         // Build updates from the metadata editor state
         const originalNamaWilayah =
@@ -652,11 +716,13 @@ export default function FocusCard() {
             (attr) => attr.attributeKey === "spatialFeature.refWilayah"
           )?.attributeValue || "";
 
+        // Add nama wilayah update if changed
         if (metadataEditor.state.namaWilayah !== originalNamaWilayah) {
           updates["spatialFeature.refWilayah"] =
             metadataEditor.state.namaWilayah;
         }
 
+        // Add all attribute updates
         metadataEditor.state.editableAttributes.forEach((attr) => {
           const originalAttr =
             metadataEditor.state.originalFeature?.attribute?.find(
@@ -665,6 +731,7 @@ export default function FocusCard() {
                 orig.attributeKey === `spatialFeature.${attr.attributeKey}`
             );
 
+          // Include attribute if it's new or its value has changed
           if (attr.isNew && attr.attributeValue.trim() !== "") {
             updates[attr.attributeKey] = attr.attributeValue;
           } else if (

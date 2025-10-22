@@ -1811,19 +1811,12 @@ export default function TaxMap() {
         }
         removeEntry(layerId);
 
-        // Force UI refresh if requested
+        // ENHANCED: Immediate UI notification before reload starts
         if (updateUI) {
-          // Trigger RightDock refresh
+          // Notify that reload is starting
           window.dispatchEvent(
-            new CustomEvent("rightdock-refresh-requested", {
-              detail: { layerId, typeCode, reason: "layer-reload" },
-            })
-          );
-
-          // Trigger TaxMap refresh
-          window.dispatchEvent(
-            new CustomEvent("taxmap-refresh-requested", {
-              detail: { layerId, typeCode, reason: "layer-reload" },
+            new CustomEvent("layer-reload-started", {
+              detail: { layerId, typeCode, featureId },
             })
           );
         }
@@ -1885,9 +1878,9 @@ export default function TaxMap() {
             setVisible(newLayer.id, false);
           }
 
-          // Restore focus if this was the focused feature and updateUI is requested
+          // ENHANCED: Immediate focus restoration with better timing
           if (isFocusedFeature && updateUI) {
-            setTimeout(() => {
+            const restoreFocus = () => {
               // Find the feature in the new layer
               const source = newLayer.layer.getSource();
               if (source) {
@@ -1954,10 +1947,50 @@ export default function TaxMap() {
                     console.log(
                       `Restored focus for feature ${featureId} in reloaded layer with name: ${name}`
                     );
+
+                    // ENHANCED: Immediate FocusCard refresh with fresh data
+                    setTimeout(() => {
+                      console.log(
+                        "TaxMap: Triggering immediate FocusCard refresh with fresh data"
+                      );
+                      window.dispatchEvent(
+                        new CustomEvent("layer-reloaded-for-focus-refresh", {
+                          detail: {
+                            id: featureId,
+                            layerId: newLayer.id,
+                            originalLayerId: layerId,
+                            newLayerId: newLayer.id,
+                            typeCode,
+                            forceRefresh,
+                            updateUI,
+                            props: {
+                              id: String(featureId),
+                              layerId: newLayer.id,
+                              name,
+                              lon,
+                              lat,
+                              geometry:
+                                ol?.format
+                                  ?.GeoJSON?.()
+                                  ?.writeGeometryObject?.(
+                                    geom
+                                      .clone()
+                                      .transform("EPSG:3857", "EPSG:4326")
+                                  ) || {},
+                              _rawAttributes: rawAttributes,
+                            },
+                          },
+                        })
+                      );
+                    }, 100); // Very short delay for immediate update
                   }
                 }
               }
-            }, 500); // Wait for layer to be fully loaded
+            };
+
+            // Try immediately first, then fallback with longer delay
+            restoreFocus();
+            setTimeout(restoreFocus, 300);
           }
 
           // Emit success event with enhanced details
@@ -1987,9 +2020,9 @@ export default function TaxMap() {
             })
           );
 
-          // Trigger final UI synchronization
+          // ENHANCED: More reliable UI synchronization with multiple attempts
           if (updateUI) {
-            setTimeout(() => {
+            const triggerUISync = () => {
               window.dispatchEvent(
                 new CustomEvent("ui-synchronization-complete", {
                   detail: {
@@ -2000,7 +2033,12 @@ export default function TaxMap() {
                   },
                 })
               );
-            }, 1000);
+            };
+
+            // Multiple attempts to ensure UI synchronization
+            setTimeout(triggerUISync, 200);
+            setTimeout(triggerUISync, 500);
+            setTimeout(triggerUISync, 1000);
           }
         } else {
           throw new Error("New layer not found after reload");
@@ -2036,10 +2074,7 @@ export default function TaxMap() {
       console.log(`Layer reloaded: ${originalLayerId} -> ${newLayerId}`);
 
       // If the currently selected feature was in the reloaded layer, update the focus
-      if (
-        selectedId &&
-        String(featureId ?? "") === String(selectedId ?? "")
-      ) {
+      if (selectedId && String(featureId ?? "") === String(selectedId ?? "")) {
         // Find the feature in the new layer
         const st = useLayersStore.getState();
         const newLayerEntry = st.layers.find((l) => l.id === newLayerId);
@@ -2064,9 +2099,8 @@ export default function TaxMap() {
               const geom4326 = geom.clone().transform("EPSG:3857", "EPSG:4326");
               const rawAttributes = feature.get("_rawAttributes");
               const geoJsonWriter = new GeoJSON();
-              const geometryObject = geoJsonWriter.writeGeometryObject(
-                geom4326
-              );
+              const geometryObject =
+                geoJsonWriter.writeGeometryObject(geom4326);
 
               // Update focus with fresh data
               setFocus({
@@ -2162,8 +2196,7 @@ export default function TaxMap() {
 
     // Handle UI synchronization completion
     const handleUISynchronizationComplete = (event: Event) => {
-      const { layerId, components } =
-        (event as CustomEvent<any>).detail || {};
+      const { layerId, components } = (event as CustomEvent<any>).detail || {};
       console.log(
         `TaxMap UI synchronization complete for layer ${layerId}, components: ${components?.join(
           ", "
@@ -2211,6 +2244,153 @@ export default function TaxMap() {
         }
       }
     };
+    // INTELLIGENT AUTO-RELOAD: Handle automatic metadata editor updates
+    const handleIntelligentAutoReload = (event: Event) => {
+      const {
+        featureId,
+        layerId,
+        namaWilayah,
+        idWilayah,
+        rawAttributes,
+        completeFeature,
+        isAutoUpdate,
+      } = (event as CustomEvent<any>).detail || {};
+
+      console.log("TaxMap: handleIntelligentAutoReload event received", {
+        featureId,
+        layerId,
+        namaWilayah,
+        idWilayah,
+        attributeCount: rawAttributes?.length || 0,
+        isAutoUpdate,
+      });
+
+      if (!featureId || !layerId) {
+        console.warn("TaxMap: Invalid intelligent-auto-reload event payload");
+        return;
+      }
+
+      // Find the layer and feature to update
+      const st = useLayersStore.getState();
+      const layerEntry = st.layers.find((l) => l.id === layerId);
+
+      if (!layerEntry) {
+        console.warn(
+          `TaxMap: Layer ${layerId} not found for intelligent auto-reload`
+        );
+        return;
+      }
+
+      const src = (layerEntry.layer as VectorLayer<VectorSource>).getSource?.();
+      if (!src) {
+        console.warn(`TaxMap: Layer ${layerId} has no source`);
+        return;
+      }
+
+      const feature = src
+        .getFeatures()
+        .find((f: any) => String(f.get("id") || "") === String(featureId));
+
+      if (!feature) {
+        console.warn(
+          `TaxMap: Feature ${featureId} not found in layer ${layerId}`
+        );
+        return;
+      }
+
+      // Update the feature with fresh data
+      if (rawAttributes && Array.isArray(rawAttributes)) {
+        // Update _rawAttributes with fresh data
+        feature.set("_rawAttributes", [...rawAttributes]);
+
+        // Update local properties from fresh attributes
+        rawAttributes.forEach((attr: any) => {
+          if (attr.attributeKey === "spatialFeature.refWilayah") {
+            feature.set("name", attr.attributeValue);
+          }
+        });
+
+        // Update the feature's display name
+        const refWilayahAttr = rawAttributes.find(
+          (attr: any) => attr.attributeKey === "spatialFeature.refWilayah"
+        );
+        if (refWilayahAttr && refWilayahAttr.attributeValue) {
+          feature.set("name", refWilayahAttr.attributeValue);
+        }
+      }
+
+      // Trigger layer refresh to update the display
+      layerEntry.layer.changed();
+
+      // Update the current focus if this is the focused feature
+      const currentFocus = useMapStore.getState().focus;
+      if (
+        currentFocus &&
+        typeof currentFocus === "object" &&
+        "id" in currentFocus
+      ) {
+        const currentFocusId = String(currentFocus.id);
+        const eventFeatureId = String(featureId);
+
+        if (currentFocusId === eventFeatureId) {
+          console.log(
+            "TaxMap: Updating current focus with intelligent auto-reload data"
+          );
+
+          const geom = feature.getGeometry() as Geometry;
+          if (geom) {
+            const p3857 = bestPointForStreetView(geom);
+            const [lon, lat] = toLonLat(p3857);
+            const geom4326 = geom.clone().transform("EPSG:3857", "EPSG:4326");
+
+            const updatedFocus = {
+              ...currentFocus,
+              name: namaWilayah || (currentFocus as any).name,
+              id: idWilayah || (currentFocus as any).id,
+              lon,
+              lat,
+              layerId,
+              geom: new GeoJSON().writeGeometryObject(geom4326),
+              _rawAttributes: rawAttributes,
+            };
+
+            useMapStore.getState().setFocus(updatedFocus);
+            useMapStore.getState().setSelectedId(featureId);
+
+            console.log(
+              "TaxMap: Focus updated with intelligent auto-reload data",
+              {
+                oldName: (currentFocus as any).name,
+                newName: updatedFocus.name,
+                hasRawAttributes: !!updatedFocus._rawAttributes,
+              }
+            );
+          }
+        }
+      }
+
+      // Emit success event for UI synchronization
+      window.dispatchEvent(
+        new CustomEvent("intelligent-auto-reload-complete", {
+          detail: {
+            featureId,
+            layerId,
+            namaWilayah,
+            idWilayah,
+            success: true,
+            timestamp: Date.now(),
+          },
+        })
+      );
+
+      console.log("TaxMap: Intelligent auto-reload completed successfully");
+    };
+
+    window.addEventListener(
+      "intelligent-auto-reload",
+      handleIntelligentAutoReload as any
+    );
+
     window.addEventListener(
       "ui-synchronization-complete",
       handleUISynchronizationComplete
@@ -2251,6 +2431,10 @@ export default function TaxMap() {
       window.removeEventListener(
         "ui-synchronization-complete",
         handleUISynchronizationComplete
+      );
+      window.removeEventListener(
+        "intelligent-auto-reload",
+        handleIntelligentAutoReload as any
       );
 
       const hs = hoverStateRef.current;
