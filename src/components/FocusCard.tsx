@@ -487,22 +487,114 @@ export default function FocusCard() {
 
     // Listen for success/error events from the metadata editor
     const onPropsApplied = (ev: Event) => {
-      const { id: rid, layerId: rlayer } =
-        (ev as CustomEvent<any>).detail || {};
+      const {
+        id: rid,
+        layerId: rlayer,
+        reloadLayer: shouldReloadLayer,
+        updatedProps,
+        updatedSpatialFeature,
+        updatedRawAttributes,
+      } = (ev as CustomEvent<any>).detail || {};
+
       if (rid !== openIdRef.current || rlayer !== openLayerIdRef.current)
         return;
 
       console.log("FocusCard: onPropsApplied event received", {
         featureId: rid,
         layerId: rlayer,
+        hasUpdatedProps: !!updatedProps,
+        hasUpdatedSpatialFeature: !!updatedSpatialFeature,
       });
 
       // Re-enable auto-close after successful save
       shouldAutoCloseRef.current = true;
       setToast({ type: "success", msg: "Metadata berhasil disimpan." });
 
-      // Don't immediately refresh here - wait for layer reload to complete
-      // The layer reload will trigger a fresh data fetch
+      const resolvedLayerIdStr = String(
+        rlayer ??
+          openLayerIdRef.current ??
+          (focus as any)?.layerId ??
+          ""
+      );
+
+      const normalizedAttributes: SpatialFeatureAttribute[] | undefined =
+        Array.isArray(updatedSpatialFeature?.attribute)
+          ? (updatedSpatialFeature.attribute as SpatialFeatureAttribute[]).map(
+              (attr: SpatialFeatureAttribute, index: number) => ({
+                ...attr,
+                attributeIndex:
+                  attr.attributeIndex !== undefined
+                    ? attr.attributeIndex
+                    : index,
+              })
+            )
+          : Array.isArray(updatedRawAttributes)
+          ? (updatedRawAttributes as SpatialFeatureAttribute[]).map(
+              (attr: SpatialFeatureAttribute, index: number) => ({
+                ...attr,
+                attributeIndex:
+                  attr.attributeIndex !== undefined
+                    ? attr.attributeIndex
+                    : index,
+              })
+            )
+          : undefined;
+
+      if (updatedSpatialFeature || normalizedAttributes) {
+        const baseFeature: SpatialFeature = updatedSpatialFeature
+          ? {
+              ...updatedSpatialFeature,
+              attribute: normalizedAttributes || [],
+            }
+          : {
+              ...(metadataEditor.state.originalFeature || {
+                id: Number(rid) || 0,
+                systemId: 0,
+                type: 0,
+                identifier: "",
+                label: "",
+                value: "",
+                status: 1,
+                description: "",
+                createdBy: "",
+                createdAt: 0,
+                updatedBy: "",
+                updatedAt: 0,
+              }),
+              id: Number(rid) || 0,
+              attribute: normalizedAttributes || [],
+            };
+
+        metadataEditor.actions.startEditing(baseFeature);
+        editorInitializedRef.current = true;
+      }
+
+      const propsForFocus =
+        updatedProps ||
+        (normalizedAttributes
+          ? {
+              id: rid,
+              name:
+                normalizedAttributes.find(
+                  (attr) =>
+                    attr.attributeKey === "spatialFeature.refWilayah"
+                )?.attributeValue || (focus as any)?.name,
+              _rawAttributes: normalizedAttributes,
+            }
+          : undefined);
+
+      if (propsForFocus) {
+        syncFocusWithProps(propsForFocus, resolvedLayerIdStr);
+      }
+
+      if (!shouldReloadLayer) {
+        console.log(
+          "FocusCard: Layer reload not requested, using immediate update data"
+        );
+        return;
+      }
+
+      // If a reload is requested, wait for the follow-up layer reload event
       console.log(
         "FocusCard: Waiting for layer reload to complete before refreshing data"
       );

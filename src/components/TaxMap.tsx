@@ -33,6 +33,10 @@ import shp from "shpjs";
 import { useMapStore } from "../hooks/useMapStore";
 import { styleFromCfg, useLayersStore } from "../hooks/useLayersStore";
 import { useMetadataEditor } from "../hooks/useMetadataEditor";
+import type {
+  SpatialFeature,
+  SpatialFeatureAttribute,
+} from "../lib/api/spatialFeature";
 
 const ADMIN_SRC = "/data/5103.zip";
 const INITIAL_CENTER = fromLonLat([115.178, -8.5]);
@@ -1553,8 +1557,42 @@ export default function TaxMap() {
             const success = await metadataEditor.actions.saveChanges();
 
             if (success) {
+              const updatedFeatureFromEditor: SpatialFeature | null =
+                metadataEditor.state.originalFeature
+                  ? {
+                      ...metadataEditor.state.originalFeature,
+                      attribute:
+                        metadataEditor.state.originalFeature.attribute?.map(
+                          (attr) => ({ ...attr })
+                        ) ?? [],
+                    }
+                  : null;
+
+              const updatedRawAttributes: SpatialFeatureAttribute[] =
+                updatedFeatureFromEditor?.attribute?.map((attr, index) => ({
+                  ...attr,
+                  attributeIndex:
+                    attr.attributeIndex !== undefined
+                      ? attr.attributeIndex
+                      : index,
+                })) ??
+                (Array.isArray(rawAttributes)
+                  ? (rawAttributes as SpatialFeatureAttribute[]).map(
+                      (attr, index) => ({
+                        ...attr,
+                        attributeIndex:
+                          (attr as any).attributeIndex !== undefined
+                            ? (attr as any).attributeIndex
+                            : index,
+                      })
+                    )
+                  : []);
+
               // Update the local feature with the new attributes
-              ft.set("_rawAttributes", [...rawAttributes]);
+              ft.set(
+                "_rawAttributes",
+                updatedRawAttributes.map((attr) => ({ ...attr }))
+              );
 
               // Update local properties
               Object.keys(updates).forEach((k) => {
@@ -1563,16 +1601,57 @@ export default function TaxMap() {
               });
 
               // Update id/name if changed
-              if (updates["spatialFeature.refWilayah"]) {
+              const updatedNameFromAttributes = updatedRawAttributes.find(
+                (attr) => attr.attributeKey === "spatialFeature.refWilayah"
+              )?.attributeValue;
+
+              if (updatedNameFromAttributes) {
+                (ft as any).set("name", updatedNameFromAttributes);
+              } else if (updates["spatialFeature.refWilayah"]) {
                 (ft as any).set("name", updates["spatialFeature.refWilayah"]);
               }
 
               (le.layer as any).changed?.();
 
-              // Emit success event
+              const updatedProps = {
+                id: ft.get("id"),
+                name:
+                  updatedNameFromAttributes ||
+                  (ft.get("name") as string) ||
+                  (updates["spatialFeature.refWilayah"] as string) ||
+                  "",
+                _rawAttributes: updatedRawAttributes.map((attr) => ({
+                  ...attr,
+                })),
+              };
+
+              const currentFocus = useMapStore.getState().focus;
+              if (
+                currentFocus &&
+                String((currentFocus as any)?.id ?? "") === String(id)
+              ) {
+                const { setFocus } = useMapStore.getState();
+                setFocus({
+                  ...(currentFocus as any),
+                  name:
+                    updatedProps.name || (currentFocus as any)?.name || "",
+                  _rawAttributes: updatedProps._rawAttributes,
+                });
+              }
+
+              // Emit success event with updated data for downstream consumers
               window.dispatchEvent(
                 new CustomEvent("feature-props-applied", {
-                  detail: { id, layerId: le.id, updates, deletes, reloadLayer },
+                  detail: {
+                    id,
+                    layerId: le.id,
+                    updates,
+                    deletes,
+                    reloadLayer,
+                    updatedProps,
+                    updatedRawAttributes: updatedProps._rawAttributes,
+                    updatedSpatialFeature: updatedFeatureFromEditor || undefined,
+                  },
                 })
               );
 
