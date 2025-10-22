@@ -25,6 +25,7 @@ export interface LoginResponse {
 }
 
 const TOKEN_KEY = 'ret_token';
+const ACCESS_TOKEN_KEY = 'ret_access_token';
 const EXPIRES_AT_KEY = 'ret_token_expires_at';
 const REFRESH_BUFFER_MS = 5 * 60 * 1000; // 5 minutes before expiration
 const WIB_OFFSET_MS = 7 * 60 * 60 * 1000; // UTC+7 in milliseconds
@@ -319,7 +320,19 @@ export class AuthenticationManager {
    */
   getToken(): string | null {
     try {
-      return localStorage.getItem(TOKEN_KEY);
+      // Check for both token keys and use the valid one
+      const token = localStorage.getItem(TOKEN_KEY);
+      const accessToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+      
+      // If both exist, remove the duplicate and keep the primary one
+      if (token && accessToken && token !== accessToken) {
+        console.warn('Duplicate tokens detected, cleaning up...');
+        localStorage.removeItem(ACCESS_TOKEN_KEY);
+        return token;
+      }
+      
+      // Return whichever token exists
+      return token || accessToken;
     } catch {
       return null;
     }
@@ -352,6 +365,11 @@ export class AuthenticationManager {
   storeAuthData(response: LoginResponse): void {
     try {
       const normalizedExpiration = normalizeExpirationTimestamp(response.expireAt);
+      
+      // Clean up any existing duplicate tokens first
+      localStorage.removeItem(ACCESS_TOKEN_KEY);
+      
+      // Store the primary token
       localStorage.setItem(TOKEN_KEY, response.accessToken);
       localStorage.setItem(EXPIRES_AT_KEY, normalizedExpiration.toString());
       
@@ -379,6 +397,7 @@ export class AuthenticationManager {
   clearAuthData(): void {
     try {
       localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(ACCESS_TOKEN_KEY);
       localStorage.removeItem(EXPIRES_AT_KEY);
     } catch (error) {
       console.error('Failed to clear auth data:', error);

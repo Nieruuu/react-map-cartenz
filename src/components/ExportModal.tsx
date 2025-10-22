@@ -43,6 +43,14 @@ export default function ExportModal({ open, onClose, onExport }: Props) {
 
   useEffect(() => {
     if (!open) return;
+
+    // Dispatch custom event when modal opens (for FocusCard auto-close)
+    window.dispatchEvent(
+      new CustomEvent("open-modal", {
+        detail: { modal: "ExportModal" },
+      })
+    );
+
     const firstVisible = vectorLayers.find((le) => le.visible);
     setPicked(firstVisible?.id || vectorLayers[0]?.id || null);
   }, [open, vectorLayers]);

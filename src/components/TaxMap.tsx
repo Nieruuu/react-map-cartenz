@@ -32,6 +32,7 @@ import shp from "shpjs";
 
 import { useMapStore } from "../hooks/useMapStore";
 import { styleFromCfg, useLayersStore } from "../hooks/useLayersStore";
+import { useMetadataEditor } from "../hooks/useMetadataEditor";
 
 const ADMIN_SRC = "/data/5103.zip";
 const INITIAL_CENTER = fromLonLat([115.178, -8.5]);
@@ -737,6 +738,9 @@ export default function TaxMap() {
   const addLayerToMgr = useLayersStore((s) => s.addLayer);
   const topFirst = useLayersStore((s) => s.topFirst);
 
+  // Mount metadata editor hook to handle API-based feature updates
+  const metadataEditor = useMetadataEditor();
+
   useEffect(() => {
     if (!mapDiv.current) return;
 
@@ -1385,6 +1389,8 @@ export default function TaxMap() {
         : st.layers;
 
       let props: Record<string, any> = {};
+      let foundFeature: any = null;
+
       for (const le of targets) {
         const src = (le.layer as VectorLayer<VectorSource>).getSource?.();
         if (!src) continue;
@@ -1395,7 +1401,13 @@ export default function TaxMap() {
         const raw = ft.getProperties?.() || {};
         const { geometry, geom, the_geom, _geom, ...rest } = raw as any;
         props = rest;
+        foundFeature = ft;
         break;
+      }
+
+      // Check if this is an API-loaded feature with _rawAttributes
+      if (foundFeature && foundFeature.get("_rawAttributes")) {
+        props._rawAttributes = foundFeature.get("_rawAttributes");
       }
 
       window.dispatchEvent(
@@ -1407,14 +1419,27 @@ export default function TaxMap() {
     window.addEventListener("request-feature-props", onRequestProps as any);
 
     // Apply props + sinkron id/name jika alias diubah
-    const onApplyFeatureProps = (ev: Event) => {
+    const onApplyFeatureProps = async (ev: Event) => {
       const {
         id,
         layerId,
         updates = {},
         deletes = [],
+        reloadLayer = false,
       } = (ev as CustomEvent<any>).detail || {};
-      if (!id) return;
+
+      console.log("TaxMap: Received apply-feature-props event", {
+        id,
+        layerId,
+        updates,
+        deletes,
+        reloadLayer,
+      });
+
+      if (!id) {
+        console.warn("TaxMap: apply-feature-props event missing id");
+        return;
+      }
 
       const st = useLayersStore.getState();
       const targets = layerId
@@ -1429,60 +1454,687 @@ export default function TaxMap() {
           .find((f: any) => String(f.get("id") || "") === String(id));
         if (!ft) continue;
 
-        Object.keys(updates).forEach((k) => {
-          if (/^(geometry|geom|the_geom|_geom)$/i.test(k)) return;
-          (ft as any).set(k, (updates as any)[k]);
-        });
-        (deletes as string[]).forEach((k) => {
-          if (/^(geometry|geom|the_geom|_geom)$/i.test(k)) return;
+        // Check if this is an API-loaded feature that needs server-side updates
+        const rawAttributes = ft.get("_rawAttributes");
+        if (rawAttributes && Array.isArray(rawAttributes)) {
+          // This is an API-loaded feature, use the metadata editor
           try {
-            (ft as any).unset?.(k, true);
-          } catch {}
-        });
+            // Create a SpatialFeature object from the current feature data
+            const spatialFeature = {
+              id: parseInt(String(id)),
+              systemId: 0,
+              type: 0,
+              identifier: "",
+              label: "",
+              value: "",
+              status: 1,
+              attribute: rawAttributes,
+              description: "",
+              createdBy: "",
+              createdAt: 0,
+              updatedBy: "",
+              updatedAt: 0,
+            };
 
-        // bila user mengubah kode/nama via alias resmi, ikutkan ke id/name
-        const pickFirst = (keys: string[]) => {
-          for (const k of keys)
-            if (
-              k in (updates as any) &&
-              String((updates as any)[k]).trim() !== ""
-            )
-              return String((updates as any)[k]).trim();
-          return undefined;
-        };
-        const newIdMaybe = pickFirst(CODE_KEYS);
-        const newNameMaybe = pickFirst(NAME_KEYS);
-        if (newIdMaybe) (ft as any).set("id", newIdMaybe);
-        if (newNameMaybe) (ft as any).set("name", newNameMaybe);
+            // Update the spatialFeature with the changes from the editor
+            Object.keys(updates).forEach((key) => {
+              if (key === "spatialFeature.refWilayah") {
+                // Update the refWilayah attribute
+                const refWilayahAttr = rawAttributes.find(
+                  (attr: any) =>
+                    attr.attributeKey === "spatialFeature.refWilayah"
+                );
+                if (refWilayahAttr) {
+                  refWilayahAttr.attributeValue = updates[key];
+                }
+              } else if (key.startsWith("spatialFeature.")) {
+                // Update other spatialFeature attributes
+                const attr = rawAttributes.find(
+                  (a: any) => a.attributeKey === key
+                );
+                if (attr) {
+                  attr.attributeValue = updates[key];
+                } else {
+                  // Add new attribute
+                  rawAttributes.push({
+                    id: 0, // New attribute
+                    attributeKey: key,
+                    attributeValue: updates[key],
+                    attributeLabel: key,
+                    attributeValueType: 1,
+                  });
+                }
+              }
+            });
 
-        (le.layer as any).changed?.();
+            // Handle deletions
+            deletes.forEach((key: string) => {
+              if (key.startsWith("spatialFeature.")) {
+                const index = rawAttributes.findIndex(
+                  (a: any) => a.attributeKey === key
+                );
+                if (index !== -1) {
+                  rawAttributes.splice(index, 1);
+                }
+              }
+            });
 
-        const idNow = String((ft as any).get("id") || "");
-        const nameNow =
-          String((ft as any).get("name") || "") || featureName(ft as any) || "";
-        const geom = (ft as any).getGeometry() as Geometry;
-        const p3857 = bestPointForStreetView(geom);
-        const [lon, lat] = toLonLat(p3857);
-        const geom4326 = geom.clone().transform("EPSG:3857", "EPSG:4326");
-        setSelectedId(idNow);
-        setFocus({
-          id: idNow,
-          name: nameNow,
-          lon,
-          lat,
-          layerId: le.id,
-          geom: new GeoJSON().writeGeometryObject(geom4326),
-        });
+            // Start editing with the metadata editor
+            metadataEditor.actions.startEditing(spatialFeature);
 
-        window.dispatchEvent(
-          new CustomEvent("feature-props-applied", {
-            detail: { id, layerId: le.id, updates, deletes },
-          })
-        );
+            // Save changes to the server
+            const success = await metadataEditor.actions.saveChanges();
+
+            if (success) {
+              // Update the local feature with the new attributes
+              ft.set("_rawAttributes", [...rawAttributes]);
+
+              // Update local properties
+              Object.keys(updates).forEach((k) => {
+                if (/^(geometry|geom|the_geom|_geom)$/i.test(k)) return;
+                (ft as any).set(k, (updates as any)[k]);
+              });
+
+              // Update id/name if changed
+              if (updates["spatialFeature.refWilayah"]) {
+                (ft as any).set("name", updates["spatialFeature.refWilayah"]);
+              }
+
+              (le.layer as any).changed?.();
+
+              // Emit success event
+              window.dispatchEvent(
+                new CustomEvent("feature-props-applied", {
+                  detail: { id, layerId: le.id, updates, deletes, reloadLayer },
+                })
+              );
+
+              // Handle layer reload if requested
+              if (reloadLayer) {
+                console.log(
+                  "TaxMap: reloadLayer is true, initiating layer reload process"
+                );
+                try {
+                  // Find the layer entry to reload
+                  const layerEntry = useLayersStore
+                    .getState()
+                    .layers.find((l) => l.id === le.id);
+                  console.log(
+                    "TaxMap: Found layer entry:",
+                    layerEntry
+                      ? {
+                          id: layerEntry.id,
+                          name: layerEntry.name,
+                          kind: layerEntry.kind,
+                          typeCode: layerEntry.typeCode,
+                        }
+                      : null
+                  );
+
+                  if (layerEntry) {
+                    // Get the type code from the layer's raw attributes
+                    const typeAttribute = rawAttributes.find(
+                      (attr: any) => attr.attributeKey === "spatialFeature.type"
+                    );
+                    const typeCode = typeAttribute?.attributeValue;
+                    console.log(
+                      "TaxMap: Extracted typeCode from rawAttributes:",
+                      typeCode
+                    );
+
+                    if (typeCode) {
+                      console.log(
+                        `TaxMap: Dispatching reload-api-layer event for ${le.id} with type ${typeCode}`
+                      );
+
+                      // Dispatch event to reload the layer with enhanced details
+                      const reloadEvent = new CustomEvent("reload-api-layer", {
+                        detail: {
+                          layerId: le.id,
+                          typeCode,
+                          featureId: id,
+                          forceRefresh: true, // Force complete layer refresh
+                          updateUI: true, // Update all UI components
+                        },
+                      });
+                      console.log(
+                        "TaxMap: reload-api-layer event detail:",
+                        reloadEvent.detail
+                      );
+                      window.dispatchEvent(reloadEvent);
+                    } else {
+                      console.error(
+                        "TaxMap: No typeCode found in rawAttributes"
+                      );
+                    }
+                  } else {
+                    console.error(
+                      `TaxMap: Layer entry ${le.id} not found in store`
+                    );
+                  }
+                } catch (reloadError) {
+                  console.error("TaxMap: Error reloading layer:", reloadError);
+                  // Emit reload error event
+                  window.dispatchEvent(
+                    new CustomEvent("layer-reload-error", {
+                      detail: {
+                        id,
+                        layerId: le.id,
+                        error: "Failed to reload layer after save",
+                      },
+                    })
+                  );
+                }
+              } else {
+                console.log(
+                  "TaxMap: reloadLayer is false, skipping layer reload"
+                );
+              }
+            } else {
+              // Emit error event
+              window.dispatchEvent(
+                new CustomEvent("feature-props-error", {
+                  detail: {
+                    id,
+                    layerId: le.id,
+                    error: "Failed to save changes to server",
+                  },
+                })
+              );
+            }
+          } catch (error) {
+            console.error("Error applying feature props:", error);
+            window.dispatchEvent(
+              new CustomEvent("feature-props-error", {
+                detail: { id, layerId: le.id, error: String(error) },
+              })
+            );
+          }
+        } else {
+          // This is a local feature, use the original logic
+          Object.keys(updates).forEach((k) => {
+            if (/^(geometry|geom|the_geom|_geom)$/i.test(k)) return;
+            (ft as any).set(k, (updates as any)[k]);
+          });
+          (deletes as string[]).forEach((k) => {
+            if (/^(geometry|geom|the_geom|_geom)$/i.test(k)) return;
+            try {
+              (ft as any).unset?.(k, true);
+            } catch {}
+          });
+
+          // bila user mengubah kode/nama via alias resmi, ikutkan ke id/name
+          const pickFirst = (keys: string[]) => {
+            for (const k of keys)
+              if (
+                k in (updates as any) &&
+                String((updates as any)[k]).trim() !== ""
+              )
+                return String((updates as any)[k]).trim();
+            return undefined;
+          };
+          const newIdMaybe = pickFirst(CODE_KEYS);
+          const newNameMaybe = pickFirst(NAME_KEYS);
+          if (newIdMaybe) (ft as any).set("id", newIdMaybe);
+          if (newNameMaybe) (ft as any).set("name", newNameMaybe);
+
+          (le.layer as any).changed?.();
+
+          const idNow = String((ft as any).get("id") || "");
+          const nameNow =
+            String((ft as any).get("name") || "") ||
+            featureName(ft as any) ||
+            "";
+          const geom = (ft as any).getGeometry() as Geometry;
+          const p3857 = bestPointForStreetView(geom);
+          const [lon, lat] = toLonLat(p3857);
+          const geom4326 = geom.clone().transform("EPSG:3857", "EPSG:4326");
+          setSelectedId(idNow);
+          setFocus({
+            id: idNow,
+            name: nameNow,
+            lon,
+            lat,
+            layerId: le.id,
+            geom: new GeoJSON().writeGeometryObject(geom4326),
+          });
+
+          window.dispatchEvent(
+            new CustomEvent("feature-props-applied", {
+              detail: { id, layerId: le.id, updates, deletes },
+            })
+          );
+        }
         break;
       }
     };
     window.addEventListener("apply-feature-props", onApplyFeatureProps as any);
+
+    // Handle layer reload requests (moved from SmartGovLoader to ensure always active)
+    const handleReloadLayer = async (event: Event) => {
+      console.log("TaxMap: handleReloadLayer called");
+      const {
+        layerId,
+        typeCode,
+        featureId,
+        forceRefresh = false,
+        updateUI = false,
+      } = (event as CustomEvent<any>).detail || {};
+
+      console.log("TaxMap: reload-api-layer event received with payload:", {
+        layerId,
+        typeCode,
+        featureId,
+        forceRefresh,
+        updateUI,
+      });
+
+      if (!typeCode || !layerId) {
+        console.error("TaxMap: Invalid reload-api-layer event payload:", {
+          layerId,
+          typeCode,
+          featureId,
+          forceRefresh,
+          updateUI,
+        });
+        return;
+      }
+
+      try {
+        console.log(
+          `TaxMap handling layer reload for ${layerId} with type ${typeCode}, forceRefresh: ${forceRefresh}, updateUI: ${updateUI}`
+        );
+
+        // Import required modules dynamically
+        const { listSpatialFeatures } = await import(
+          "../lib/api/spatialFeature"
+        );
+        const { addApiLayersByType } = await import("../features/loadFromApi");
+
+        // Store current focus state if this is the focused feature
+        const currentFocus = useMapStore.getState().focus;
+        const isFocusedFeature =
+          currentFocus &&
+          typeof currentFocus === "object" &&
+          "id" in currentFocus &&
+          currentFocus.id === featureId;
+
+        // Find the existing layer in the store
+        const { layers, map, removeEntry } = useLayersStore.getState();
+        const existingLayer = layers.find((l) => l.id === layerId);
+
+        if (!existingLayer) {
+          console.warn(`Layer ${layerId} not found in store`);
+          return;
+        }
+
+        // Store layer properties for restoration
+        const layerProperties = {
+          name: existingLayer.name,
+          kind: existingLayer.kind,
+          styleCfg: existingLayer.styleCfg,
+          visible: existingLayer.visible,
+        };
+
+        console.log(`Removing existing layer ${layerId} from map and store`);
+
+        // Remove the existing layer from map and store
+        if (map && existingLayer.layer) {
+          map.removeLayer(existingLayer.layer);
+        }
+        removeEntry(layerId);
+
+        // Force UI refresh if requested
+        if (updateUI) {
+          // Trigger RightDock refresh
+          window.dispatchEvent(
+            new CustomEvent("rightdock-refresh-requested", {
+              detail: { layerId, typeCode, reason: "layer-reload" },
+            })
+          );
+
+          // Trigger TaxMap refresh
+          window.dispatchEvent(
+            new CustomEvent("taxmap-refresh-requested", {
+              detail: { layerId, typeCode, reason: "layer-reload" },
+            })
+          );
+        }
+
+        // Load fresh data from API for the specific type
+        const response = await listSpatialFeatures({
+          pageNumber: 1,
+          pageSize: 1000, // Load all features for this type
+          filters: [`spatialFeature.type|eq|${typeCode}`],
+          include: ["attribute"],
+        });
+
+        const { transformSpatialFeatures } = await import(
+          "../lib/api/transformers"
+        );
+        const transformed = transformSpatialFeatures(response.data || []);
+
+        if (transformed.length === 0) {
+          console.warn("No features returned for layer reload");
+          return;
+        }
+
+        console.log(
+          `Loading fresh data for type ${typeCode}, ${transformed.length} features`
+        );
+
+        // Load fresh data as a new layer to replace the old one
+        const layerResults = await addApiLayersByType({
+          typeCode,
+          pageNumber: 1,
+          pageSize: 1000,
+        });
+
+        // Find the newly created layer and restore properties
+        const { layers: newLayers } = useLayersStore.getState();
+        const newLayer = newLayers.find(
+          (l) =>
+            l.kind === layerProperties.kind && l.name === layerProperties.name
+        );
+
+        if (newLayer) {
+          console.log(`Restoring properties for new layer ${newLayer.id}`);
+
+          // Restore style configuration
+          if (layerProperties.styleCfg) {
+            const { updateStyleCfg } = useLayersStore.getState();
+            updateStyleCfg(newLayer.id, layerProperties.styleCfg);
+          }
+
+          // Restore visibility
+          if (!layerProperties.visible) {
+            const { setVisible } = useLayersStore.getState();
+            setVisible(newLayer.id, false);
+          }
+
+          // Restore focus if this was the focused feature and updateUI is requested
+          if (isFocusedFeature && updateUI) {
+            setTimeout(() => {
+              // Find the feature in the new layer
+              const source = newLayer.layer.getSource();
+              if (source) {
+                const feature = source
+                  .getFeatures()
+                  .find(
+                    (f: any) => String(f.get("id") || "") === String(featureId)
+                  );
+
+                if (feature) {
+                  const name =
+                    String(feature.get("name") || "") || `Feature ${featureId}`;
+                  const geom = feature.getGeometry();
+
+                  if (geom) {
+                    // Calculate center point
+                    const center = geom.getExtent();
+                    const centerX = (center[0] + center[2]) / 2;
+                    const centerY = (center[1] + center[3]) / 2;
+
+                    // Convert to lon/lat
+                    const ol = (window as any).ol;
+                    const [lon, lat] = ol?.proj?.toLonLat?.([
+                      centerX,
+                      centerY,
+                    ]) || [0, 0];
+
+                    // Update focus with fresh data
+                    const { setFocus, setSelectedId } = useMapStore.getState();
+                    setFocus({
+                      id: featureId,
+                      name,
+                      lon,
+                      lat,
+                      layerId: newLayer.id,
+                      geom:
+                        ol?.format
+                          ?.GeoJSON?.()
+                          ?.writeGeometryObject?.(
+                            geom.clone().transform("EPSG:3857", "EPSG:4326")
+                          ) || {},
+                    });
+
+                    setSelectedId(featureId);
+
+                    console.log(
+                      `Restored focus for feature ${featureId} in reloaded layer`
+                    );
+                  }
+                }
+              }
+            }, 500); // Wait for layer to be fully loaded
+          }
+
+          // Emit success event with enhanced details
+          console.log(
+            "TaxMap: Emitting layer-reloaded success event with details:",
+            {
+              originalLayerId: layerId,
+              newLayerId: newLayer.id,
+              typeCode,
+              featureId,
+              featureCount: transformed.length,
+              forceRefresh,
+              updateUI,
+            }
+          );
+          window.dispatchEvent(
+            new CustomEvent("layer-reloaded", {
+              detail: {
+                originalLayerId: layerId,
+                newLayerId: newLayer.id,
+                typeCode,
+                featureId,
+                featureCount: transformed.length,
+                forceRefresh,
+                updateUI,
+              },
+            })
+          );
+
+          // Trigger final UI synchronization
+          if (updateUI) {
+            setTimeout(() => {
+              window.dispatchEvent(
+                new CustomEvent("ui-synchronization-complete", {
+                  detail: {
+                    layerId: newLayer.id,
+                    originalLayerId: layerId,
+                    featureId,
+                    components: ["rightdock", "taxmap", "focuscard"],
+                  },
+                })
+              );
+            }, 1000);
+          }
+        } else {
+          throw new Error("New layer not found after reload");
+        }
+      } catch (error) {
+        console.error("Error reloading layer in TaxMap:", error);
+
+        // Emit error event
+        window.dispatchEvent(
+          new CustomEvent("layer-reload-error", {
+            detail: {
+              layerId,
+              typeCode,
+              featureId,
+              error: error instanceof Error ? error.message : "Unknown error",
+            },
+          })
+        );
+      }
+    };
+
+    // Handle layer reload success events
+    const onLayerReloaded = (ev: Event) => {
+      const { originalLayerId, newLayerId, featureId } =
+        (ev as CustomEvent<any>).detail || {};
+
+      console.log(`Layer reloaded: ${originalLayerId} -> ${newLayerId}`);
+
+      // If the currently selected feature was in the reloaded layer, update the focus
+      if (selectedId && featureId === selectedId) {
+        // Find the feature in the new layer
+        const st = useLayersStore.getState();
+        const newLayerEntry = st.layers.find((l) => l.id === newLayerId);
+
+        if (newLayerEntry) {
+          const src = (
+            newLayerEntry.layer as VectorLayer<VectorSource>
+          ).getSource?.();
+          if (src) {
+            const feature = src
+              .getFeatures()
+              .find(
+                (f: any) => String(f.get("id") || "") === String(featureId)
+              );
+
+            if (feature) {
+              const name =
+                String(feature.get("name") || "") || featureName(feature) || "";
+              const geom = feature.getGeometry() as Geometry;
+              const p3857 = bestPointForStreetView(geom);
+              const [lon, lat] = toLonLat(p3857);
+              const geom4326 = geom.clone().transform("EPSG:3857", "EPSG:4326");
+
+              // Update focus with fresh data
+              setFocus({
+                id: featureId,
+                name,
+                lon,
+                lat,
+                layerId: newLayerId,
+                geom: new GeoJSON().writeGeometryObject(geom4326),
+              });
+
+              // Update selected layer ID
+              setSelectedId(featureId);
+
+              console.log(
+                `Updated focus for feature ${featureId} with fresh data`
+              );
+
+              // Notify FocusCard to refresh its display
+              window.dispatchEvent(
+                new CustomEvent("feature-data-refreshed", {
+                  detail: {
+                    id: featureId,
+                    layerId: newLayerId,
+                    originalLayerId,
+                    newLayerId,
+                  },
+                })
+              );
+            }
+          }
+        }
+      }
+    };
+
+    // Handle layer reload error events
+    const onLayerReloadError = (ev: Event) => {
+      const { layerId, error } = (ev as CustomEvent<any>).detail || {};
+      console.error(`Layer reload failed for ${layerId}:`, error);
+
+      // Optionally notify the user
+      window.dispatchEvent(
+        new CustomEvent("layer-reload-failed", {
+          detail: { layerId, error },
+        })
+      );
+    };
+
+    window.addEventListener("reload-api-layer", handleReloadLayer);
+    window.addEventListener("layer-reloaded", onLayerReloaded as any);
+    window.addEventListener("layer-reload-error", onLayerReloadError as any);
+
+    // Handle TaxMap refresh requests
+    const handleTaxMapRefresh = (event: Event) => {
+      const { layerId, typeCode, reason } =
+        (event as CustomEvent<any>).detail || {};
+      console.log(
+        `TaxMap refresh requested for layer ${layerId}, type ${typeCode}, reason: ${reason}`
+      );
+
+      // Force map re-render by triggering a view change
+      if (mapRef.current) {
+        const view = mapRef.current.getView();
+        const currentCenter = view.getCenter();
+        const currentZoom = view.getZoom();
+
+        // Small animation to force refresh
+        if (currentCenter && currentZoom !== undefined) {
+          view.animate({
+            center: currentCenter,
+            zoom: currentZoom,
+            duration: 100,
+          });
+        }
+      }
+    };
+    window.addEventListener("taxmap-refresh-requested", handleTaxMapRefresh);
+
+    // Handle UI synchronization completion
+    const handleUISynchronizationComplete = (event: Event) => {
+      const { layerId, originalLayerId, featureId, components } =
+        (event as CustomEvent<any>).detail || {};
+      console.log(
+        `TaxMap UI synchronization complete for layer ${layerId}, components: ${components?.join(
+          ", "
+        )}`
+      );
+
+      // Force refresh of feature styles to ensure labels are updated
+      const st = useLayersStore.getState();
+      const layerEntry = st.layers.find((l) => l.id === layerId);
+
+      if (layerEntry) {
+        // Trigger style refresh to update feature labels
+        layerEntry.layer.changed();
+
+        // If this layer contains the currently selected feature, update the focus
+        if (selectedId) {
+          const src = (
+            layerEntry.layer as VectorLayer<VectorSource>
+          ).getSource?.();
+          if (src) {
+            const feature = src
+              .getFeatures()
+              .find(
+                (f: any) => String(f.get("id") || "") === String(selectedId)
+              );
+
+            if (feature) {
+              const name =
+                String(feature.get("name") || "") || featureName(feature) || "";
+              const geom = feature.getGeometry() as Geometry;
+              const p3857 = bestPointForStreetView(geom);
+              const [lon, lat] = toLonLat(p3857);
+              const geom4326 = geom.clone().transform("EPSG:3857", "EPSG:4326");
+
+              setFocus({
+                id: selectedId,
+                name,
+                lon,
+                lat,
+                layerId,
+                geom: new GeoJSON().writeGeometryObject(geom4326),
+              });
+            }
+          }
+        }
+      }
+    };
+    window.addEventListener(
+      "ui-synchronization-complete",
+      handleUISynchronizationComplete
+    );
 
     return () => {
       window.removeEventListener("goto-coords", onGoto as any);
@@ -1505,6 +2157,20 @@ export default function TaxMap() {
       window.removeEventListener(
         "apply-feature-props",
         onApplyFeatureProps as any
+      );
+      window.removeEventListener("reload-api-layer", handleReloadLayer);
+      window.removeEventListener("layer-reloaded", onLayerReloaded as any);
+      window.removeEventListener(
+        "layer-reload-error",
+        onLayerReloadError as any
+      );
+      window.removeEventListener(
+        "taxmap-refresh-requested",
+        handleTaxMapRefresh
+      );
+      window.removeEventListener(
+        "ui-synchronization-complete",
+        handleUISynchronizationComplete
       );
 
       const hs = hoverStateRef.current;

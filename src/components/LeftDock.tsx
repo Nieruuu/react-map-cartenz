@@ -533,8 +533,19 @@ export default function LeftDock() {
   type PanelKey = "draw" | "basemap" | "io";
   const [openKey, setOpenKey] = useState<PanelKey | null>(null);
   const isOpen = (k: PanelKey) => openKey === k;
-  const onPanelHeaderClick = (k: PanelKey) =>
+  const onPanelHeaderClick = (k: PanelKey) => {
+    const wasClosed = openKey !== k;
     setOpenKey(openKey === k ? null : k);
+
+    // Dispatch custom event when opening a panel (for FocusCard auto-close)
+    if (wasClosed) {
+      window.dispatchEvent(
+        new CustomEvent("panel-header-click", {
+          detail: { panel: k },
+        })
+      );
+    }
+  };
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -2171,7 +2182,7 @@ export default function LeftDock() {
           role="button"
           onClick={() => onPanelHeaderClick("io")}
         >
-          <span>Import / Export</span>
+          <span>Load Peta & Import/Export</span>
           <span
             className="icon"
             style={{

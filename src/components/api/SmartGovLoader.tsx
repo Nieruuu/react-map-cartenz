@@ -10,6 +10,9 @@ import {
   getUniqueTypeCodes,
 } from "../../lib/api/transformers";
 import { auth, type AuthState } from "../../lib/api/auth";
+import { addApiLayersByType } from "../../features/loadFromApi";
+import { useLayersStore } from "../../hooks/useLayersStore";
+import { useMapStore } from "../../hooks/useMapStore";
 
 interface LayerInfo {
   id: string;

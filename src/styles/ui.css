@@ -1761,3 +1761,99 @@ body {
   align-items: center;
   justify-items: center;
 }
+
+/* ===== ATTRIBUTES SECTION ===== */
+.attributes-section {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.attributes-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 8px;
+}
+
+.attributes-label .iconfocuscard {
+  font-size: 16px;
+  color: #6b7280;
+}
+
+.attributes-list {
+  display: grid;
+  gap: 8px;
+  max-height: 120px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.attributes-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.attributes-list::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 2px;
+}
+
+.attributes-list::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 2px;
+}
+
+.attributes-list::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+.attribute-item {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 8px;
+  padding: 6px 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 12px;
+  transition: all 0.2s ease;
+}
+
+.attribute-item:hover {
+  background: #f1f5f9;
+  border-color: #d1d5db;
+}
+
+.attribute-key {
+  font-weight: 600;
+  color: #374151;
+  word-break: break-word;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attribute-value {
+  color: #6b7280;
+  word-break: break-word;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Responsive adjustments for attributes section */
+@media (max-width: 768px) {
+  .attributes-list {
+    max-height: 100px;
+  }
+  
+  .attribute-item {
+    grid-template-columns: 100px 1fr;
+    gap: 6px;
+    padding: 4px 6px;
+    font-size: 11px;
+  }
+}

@@ -1,8 +1,10 @@
 // src/components/FocusCard.tsx
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { fromLonLat } from "ol/proj";
 import { useMapStore } from "../hooks/useMapStore";
+import { useMetadataEditor } from "../hooks/useMetadataEditor";
+import type { SpatialFeature } from "../lib/api/spatialFeature";
 
 type KV = { id: string; key: string; value: string; locked?: boolean };
 
@@ -22,27 +24,17 @@ type Pair = { codeKey: string; nameKey: string; official: boolean };
 
 export default function FocusCard() {
   const { focus, setFocus } = useMapStore();
+  const metadataEditor = useMetadataEditor();
 
-  const [openModal, setOpenModal] = useState(false);
-  const [rows, setRows] = useState<KV[]>([]);
-  const [loadingProps, setLoadingProps] = useState(false);
-
-  const [tempId, setTempId] = useState("");
-  const [tempName, setTempName] = useState("");
-
-  const pairRef = useRef<Pair>({
-    codeKey: "id",
-    nameKey: "name",
-    official: false,
-  });
-  const initialKeysRef = useRef<Set<string>>(new Set());
-  const openIdRef = useRef<string | null>(null);
-  const openLayerIdRef = useRef<string | null>(null);
+  // Ref to track if FocusCard should auto-close
+  const shouldAutoCloseRef = useRef(true);
 
   const [toast, setToast] = useState<{
     type: "success" | "error";
     msg: string;
   } | null>(null);
+
+  const [showSaveConfirmation, setShowSaveConfirmation] = useState(false);
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(null), 1500);
@@ -51,15 +43,102 @@ export default function FocusCard() {
 
   const hasFocus = !!focus;
 
+  // Auto-close FocusCard when interacting with other UI elements
+  const handleOutsideInteraction = useCallback(
+    (event: Event) => {
+      if (!focus || !shouldAutoCloseRef.current) return;
+
+      // Don't close if clicking inside the FocusCard
+      const focusCardElement = document.querySelector(".focuscard-improved");
+      if (focusCardElement && focusCardElement.contains(event.target as Node)) {
+        return;
+      }
+
+      // Don't close if clicking on the edit modal
+      const modalElement = document.querySelector(".modal-overlay");
+      if (modalElement && modalElement.contains(event.target as Node)) {
+        return;
+      }
+
+      // Close FocusCard when interacting with other UI elements
+      setFocus(null);
+    },
+    [focus, setFocus]
+  );
+
+  // Set up event listeners for auto-close
+  useEffect(() => {
+    if (!focus) return;
+
+    // Reset auto-close flag when focus changes
+    shouldAutoCloseRef.current = true;
+
+    // List of UI elements that should trigger auto-close
+    const uiSelectors = [
+      ".leftstack", // Left dock panels
+      ".rightdock", // Right dock panels
+      ".topbar", // Top bar
+      ".footerbar", // Footer bar
+      ".modal-overlay", // Any modal overlays
+      ".ld-panel", // Left dock panels
+      ".rd-item", // Right dock items
+      ".btn", // Buttons
+      ".iconbtn", // Icon buttons
+      ".form-input", // Form inputs
+      ".form-select", // Form selects
+      ".tab", // Tabs
+    ];
+
+    const handleClick = (event: Event) => {
+      // Check if the click is on any UI element that should trigger auto-close
+      const target = event.target as Element;
+      const shouldClose = uiSelectors.some(
+        (selector) =>
+          target.closest(selector) && !target.closest(".focuscard-improved")
+      );
+
+      if (shouldClose) {
+        handleOutsideInteraction(event);
+      }
+    };
+
+    // Add event listeners
+    document.addEventListener("click", handleClick, true);
+    document.addEventListener("mousedown", handleClick, true);
+    document.addEventListener("touchstart", handleClick, true);
+
+    // Also listen for custom events from other components
+    const handleCustomEvent = () => {
+      if (shouldAutoCloseRef.current) {
+        setFocus(null);
+      }
+    };
+
+    window.addEventListener("open-left-dock", handleCustomEvent);
+    window.addEventListener("open-right-dock", handleCustomEvent);
+    window.addEventListener("open-modal", handleCustomEvent);
+    window.addEventListener("panel-header-click", handleCustomEvent);
+
+    return () => {
+      document.removeEventListener("click", handleClick, true);
+      document.removeEventListener("mousedown", handleClick, true);
+      document.removeEventListener("touchstart", handleClick, true);
+      window.removeEventListener("open-left-dock", handleCustomEvent);
+      window.removeEventListener("open-right-dock", handleCustomEvent);
+      window.removeEventListener("open-modal", handleCustomEvent);
+      window.removeEventListener("panel-header-click", handleCustomEvent);
+    };
+  }, [focus, handleOutsideInteraction, setFocus]);
+
   const openEditor = () => {
     if (!focus) return;
 
-    setRows([]);
-    initialKeysRef.current = new Set();
-    openIdRef.current = (focus as any)?.id || null;
-    openLayerIdRef.current = (focus as any).layerId || null;
-    setOpenModal(true);
-    setLoadingProps(true);
+    // Disable auto-close while editing
+    shouldAutoCloseRef.current = false;
+
+    // Request feature properties to get the full feature data
+    const openIdRef = { current: (focus as any)?.id || null };
+    const openLayerIdRef = { current: (focus as any).layerId || null };
 
     const onResp = (ev: Event) => {
       const {
@@ -77,10 +156,20 @@ export default function FocusCard() {
       let idWilayah = "";
 
       // Handle API-loaded features with attribute structure
+      const attributes: any[] = [];
       if (p._rawAttributes && Array.isArray(p._rawAttributes)) {
         p._rawAttributes.forEach((attr: any) => {
           if (attr.attributeKey === "spatialFeature.refWilayah") {
             namaWilayah = attr.attributeValue || "";
+          } else {
+            // Add all attributes except spatialFeature.refWilayah
+            attributes.push({
+              id: attr.id,
+              attributeKey: attr.attributeKey,
+              attributeValue: attr.attributeValue,
+              attributeLabel: attr.attributeLabel || attr.attributeKey,
+              attributeValueType: attr.attributeValueType || 1,
+            });
           }
         });
       }
@@ -93,30 +182,87 @@ export default function FocusCard() {
       // Extract ID wilayah from id field (not uuid/value field)
       idWilayah = p.id || String((focus as any)?.id || "");
 
-      // Set the form values
-      setTempName(namaWilayah || String((focus as any)?.name || ""));
-      setTempId(idWilayah);
+      // Create a SpatialFeature object from the focus data
+      const spatialFeature: SpatialFeature = {
+        id: (focus as any)?.id || 0,
+        systemId: 0,
+        type: 0,
+        identifier: "",
+        label: "",
+        value: "",
+        status: 1,
+        attribute: attributes,
+        description: "",
+        createdBy: "",
+        createdAt: 0,
+        updatedBy: "",
+        updatedAt: 0,
+      };
 
-      // Store all attributes in internal state but don't display them
-      const list: KV[] = [];
-      initialKeysRef.current = new Set();
+      // Start editing with the metadata editor hook
+      metadataEditor.actions.startEditing(spatialFeature);
+    };
 
-      // Only keep track of all attributes internally, but don't add them to the display list
-      Object.entries(p).forEach(([k]) => {
-        if (RESERVED_KEYS.has(k)) return;
-        // Store all keys for tracking but don't display them
-        initialKeysRef.current.add(k);
-      });
+    // Listen for success/error events from the metadata editor
+    const onPropsApplied = (ev: Event) => {
+      const { id: rid, layerId: rlayer } =
+        (ev as CustomEvent<any>).detail || {};
+      if (rid !== openIdRef.current || rlayer !== openLayerIdRef.current)
+        return;
 
-      // Don't add any default attributes to the display list
-      // Only user-added attributes will be shown
-      setRows(list);
-      setLoadingProps(false);
+      // Re-enable auto-close after successful save
+      shouldAutoCloseRef.current = true;
+      setToast({ type: "success", msg: "Metadata berhasil disimpan." });
+
+      // Refresh the focus data to show updated values
+      setTimeout(() => {
+        window.dispatchEvent(
+          new CustomEvent("request-feature-props", {
+            detail: { id: (focus as any)?.id, layerId: (focus as any).layerId },
+          })
+        );
+      }, 100);
+    };
+
+    // Listen for layer reload completion to refresh focus data
+    const onLayerReloaded = (ev: Event) => {
+      const { layerId, newLayerId } = (ev as CustomEvent<any>).detail || {};
+
+      // Check if this is the layer we're interested in
+      if (layerId !== openLayerIdRef.current) return;
+
+      // Refresh the focus data with the new layer data
+      setTimeout(() => {
+        window.dispatchEvent(
+          new CustomEvent("request-feature-props", {
+            detail: {
+              id: (focus as any)?.id,
+              layerId: newLayerId || layerId, // Use new layer ID if provided
+            },
+          })
+        );
+      }, 200); // Slightly longer delay to ensure layer is fully reloaded
+    };
+
+    const onPropsError = (ev: Event) => {
+      const {
+        id: rid,
+        layerId: rlayer,
+        error,
+      } = (ev as CustomEvent<any>).detail || {};
+      if (rid !== openIdRef.current || rlayer !== openLayerIdRef.current)
+        return;
+
+      setToast({ type: "error", msg: `Gagal menyimpan: ${error}` });
     };
 
     window.addEventListener("feature-props-response", onResp as any, {
       once: true,
     });
+    window.addEventListener("feature-props-applied", onPropsApplied as any);
+    window.addEventListener("feature-props-error", onPropsError as any);
+    window.addEventListener("layer-reloaded", onLayerReloaded as any);
+
     window.dispatchEvent(
       new CustomEvent("request-feature-props", {
         detail: { id: (focus as any)?.id, layerId: (focus as any).layerId },
@@ -124,112 +270,147 @@ export default function FocusCard() {
     );
 
     // fallback supaya gak loading abadi
-    setTimeout(() => setLoadingProps(false), 900);
+    setTimeout(() => {
+      // If no response, start editing with basic data
+      if (!metadataEditor.state.isEditing) {
+        const namaWilayah = String((focus as any)?.name || "");
+        const attributes: any[] = [
+          {
+            id: 0, // Temporary ID
+            attributeKey: "spatialFeature.refWilayah",
+            attributeValue: namaWilayah,
+            attributeLabel: "spatialFeature.refWilayah",
+            attributeValueType: 1,
+          },
+        ];
+
+        const spatialFeature: SpatialFeature = {
+          id: (focus as any)?.id || 0,
+          systemId: 0,
+          type: 0,
+          identifier: "",
+          label: "",
+          value: "",
+          status: 1,
+          attribute: attributes,
+          description: "",
+          createdBy: "",
+          createdAt: 0,
+          updatedBy: "",
+          updatedAt: 0,
+        };
+
+        metadataEditor.actions.startEditing(spatialFeature);
+      }
+    }, 900);
+
+    // Clean up event listeners when component unmounts or editing ends
+    return () => {
+      window.removeEventListener(
+        "feature-props-applied",
+        onPropsApplied as any
+      );
+      window.removeEventListener("feature-props-error", onPropsError as any);
+      window.removeEventListener("layer-reloaded", onLayerReloaded as any);
+    };
   };
 
-  const addRow = () =>
-    setRows((r) => [...r, { id: `row_${Date.now()}`, key: "", value: "" }]);
-  const removeRow = (rowId: string) =>
-    setRows((r) => r.filter((x) => x.id !== rowId || x.locked));
-  const updateRow = (rowId: string, patch: Partial<KV>) =>
-    setRows((r) => {
-      const { codeKey, nameKey } = pairRef.current;
-      return r.map((x) => {
-        if (x.id !== rowId) return x;
-        let next = { ...x, ...patch };
-        // cegah user memasukkan id/name sebagai key baru
-        if (patch.key && RESERVED_KEYS.has(patch.key)) {
-          setToast({
-            type: "error",
-            msg: "Kunci 'id/name' tidak boleh diubah.",
-          });
-          next = x; // abaikan perubahan key
+  const saveAll = async () => {
+    // Show confirmation modal first
+    setShowSaveConfirmation(true);
+  };
+
+  const confirmSave = async () => {
+    setShowSaveConfirmation(false);
+
+    try {
+      // For API-loaded features, the save is handled by the TaxMap component
+      // For local features, use the direct save method
+      const isApiFeature =
+        (focus as any)?._rawAttributes &&
+        Array.isArray((focus as any)._rawAttributes);
+
+      if (isApiFeature) {
+        // Trigger the apply-feature-props event to let TaxMap handle the save
+        const updates: Record<string, any> = {};
+        const deletes: string[] = [];
+
+        // Build updates from the metadata editor state
+        const originalNamaWilayah =
+          metadataEditor.state.originalFeature?.attribute?.find(
+            (attr) => attr.attributeKey === "spatialFeature.refWilayah"
+          )?.attributeValue || "";
+
+        if (metadataEditor.state.namaWilayah !== originalNamaWilayah) {
+          updates["spatialFeature.refWilayah"] =
+            metadataEditor.state.namaWilayah;
         }
-        if (next.locked && next.key === codeKey) setTempId(next.value);
-        if (next.locked && next.key === nameKey) setTempName(next.value);
-        return next;
-      });
-    });
 
-  // sinkron input atas -> baris locked
-  useEffect(() => {
-    const { codeKey } = pairRef.current;
-    setRows((r) =>
-      r.map((x) =>
-        x.locked && x.key === codeKey ? { ...x, value: tempId } : x
-      )
-    );
-  }, [tempId]);
-  useEffect(() => {
-    const { nameKey } = pairRef.current;
-    setRows((r) =>
-      r.map((x) =>
-        x.locked && x.key === nameKey ? { ...x, value: tempName } : x
-      )
-    );
-  }, [tempName]);
+        metadataEditor.state.editableAttributes.forEach((attr) => {
+          const originalAttr =
+            metadataEditor.state.originalFeature?.attribute?.find(
+              (orig: any) =>
+                orig.id === parseInt(attr.id) ||
+                orig.attributeKey === `spatialFeature.${attr.attributeKey}`
+            );
 
-  const saveAll = () => {
-    if (!focus) return;
-    const { id, layerId } = focus as any;
+          if (attr.isNew && attr.attributeValue.trim() !== "") {
+            updates[attr.attributeKey] = attr.attributeValue;
+          } else if (
+            originalAttr &&
+            originalAttr.attributeValue !== attr.attributeValue
+          ) {
+            updates[attr.attributeKey] = attr.attributeValue;
+          }
+        });
 
-    // ambil rows non-reserved saja (user-added attributes only)
-    const cleaned = rows
-      .map((x) => ({
-        key: (x.key || "").trim(),
-        value: (x.value ?? "").toString(),
-        locked: !!x.locked,
-      }))
-      .filter((x) => x.key && !RESERVED_KEYS.has(x.key));
+        // Send the apply event with layer reload request
+        console.log(
+          "FocusCard: Dispatching apply-feature-props event with reloadLayer=true",
+          {
+            id: (focus as any)?.id,
+            layerId: (focus as any).layerId,
+            updates,
+            deletes,
+            reloadLayer: true,
+          }
+        );
+        window.dispatchEvent(
+          new CustomEvent("apply-feature-props", {
+            detail: {
+              id: (focus as any)?.id,
+              layerId: (focus as any).layerId,
+              updates,
+              deletes,
+              reloadLayer: true, // Request layer reload after save
+            },
+          })
+        );
+      } else {
+        // Local feature: use direct save method
+        const success = await metadataEditor.actions.saveChanges();
+        if (success) {
+          // Re-enable auto-close after saving
+          shouldAutoCloseRef.current = true;
+          setToast({ type: "success", msg: "Metadata berhasil disimpan." });
+        } else {
+          setToast({ type: "error", msg: "Gagal menyimpan metadata." });
+        }
+      }
+    } catch (error) {
+      console.error("Error saving metadata:", error);
+      setToast({ type: "error", msg: "Terjadi kesalahan saat menyimpan." });
+    }
+  };
 
-    const updates: Record<string, string> = {};
-    cleaned.forEach(({ key, value }) => (updates[key] = value));
-
-    // Update the core fields for QGIS export compatibility
-    updates["spatialFeature.refWilayah"] = (tempName || "").trim();
-    updates["uuid"] = (tempId || "").trim();
-    updates["id"] = (tempId || "").trim();
-    updates["name"] = (tempName || "").trim();
-
-    const currentKeys = new Set(
-      cleaned.filter((x) => !x.locked).map((x) => x.key)
-    );
-    const deletes: string[] = [];
-    initialKeysRef.current.forEach((k) => {
-      if (!currentKeys.has(k) && !RESERVED_KEYS.has(k)) deletes.push(k);
-    });
-
-    const onApplied = (ev: Event) => {
-      const d = (ev as CustomEvent<any>).detail || {};
-      if (d?.layerId === layerId)
-        setToast({ type: "success", msg: "Atribut berhasil disimpan." });
-      window.removeEventListener("feature-props-applied", onApplied as any);
-    };
-    window.addEventListener("feature-props-applied", onApplied as any, {
-      once: true,
-    });
-
-    // Apply props with proper structure for API compatibility
-    window.dispatchEvent(
-      new CustomEvent("apply-feature-props", {
-        detail: { id, layerId, updates, deletes },
-      })
-    );
-
-    setTimeout(
-      () =>
-        setToast((t) => t ?? { type: "success", msg: "Perubahan tersimpan." }),
-      700
-    );
-    openIdRef.current = null;
-    openLayerIdRef.current = null;
-    setOpenModal(false);
+  const cancelSave = () => {
+    setShowSaveConfirmation(false);
   };
 
   const cancelAll = () => {
-    openIdRef.current = null;
-    openLayerIdRef.current = null;
-    setOpenModal(false);
+    metadataEditor.actions.cancelEditing();
+    // Re-enable auto-close after canceling
+    shouldAutoCloseRef.current = true;
   };
 
   // Mini preview, posisikan shape di tengah (pakai offset centering)
@@ -427,6 +608,38 @@ export default function FocusCard() {
               </div>
             )}
 
+            {/* Custom Attributes Display */}
+            {(focus as any)?._rawAttributes &&
+              Array.isArray((focus as any)._rawAttributes) && (
+                <div className="attributes-section">
+                  <div className="attributes-label">
+                    <span className="iconfocuscard">list</span>Atribut Kustom
+                  </div>
+                  <div className="attributes-list">
+                    {((focus as any)._rawAttributes as any[])
+                      .filter((attr) => {
+                        // Filter out system attributes
+                        const systemAttributes = [
+                          "spatialFeature.type",
+                          "spatialFeature.geometry",
+                          "spatialFeature.refWilayah",
+                        ];
+                        return !systemAttributes.includes(attr.attributeKey);
+                      })
+                      .map((attr, index) => (
+                        <div key={index} className="attribute-item">
+                          <div className="attribute-key">
+                            {attr.attributeKey}
+                          </div>
+                          <div className="attribute-value">
+                            {attr.attributeValue}
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+
             <div className="action-buttons">
               <button
                 className="btn-action primary"
@@ -471,15 +684,11 @@ export default function FocusCard() {
         </div>
       </div>
 
-      {openModal &&
+      {metadataEditor.state.isEditing &&
         createPortal(
           <div
             className="modal-overlay"
-            onClick={() => {
-              openIdRef.current = null;
-              openLayerIdRef.current = null;
-              setOpenModal(false);
-            }}
+            onClick={cancelAll}
             style={{
               position: "fixed",
               inset: 0,
@@ -508,7 +717,21 @@ export default function FocusCard() {
                 overflow: "hidden",
               }}
             >
-              <h2 style={{ margin: "16px 16px 8px" }}>Edit Metadata Feature</h2>
+              <h2 style={{ margin: "16px 16px 8px" }}>
+                Edit Metadata Feature
+                {metadataEditor.state.hasUnsavedChanges && (
+                  <span
+                    style={{
+                      marginLeft: 8,
+                      fontSize: 12,
+                      color: "#f59e0b",
+                      fontWeight: "normal",
+                    }}
+                  >
+                    (Unsaved changes)
+                  </span>
+                )}
+              </h2>
 
               <div
                 className="form"
@@ -523,8 +746,10 @@ export default function FocusCard() {
                   <label style={{ minWidth: 140 }}>Nama Wilayah</label>
                   <input
                     type="text"
-                    value={tempName}
-                    onChange={(e) => setTempName(e.target.value)}
+                    value={metadataEditor.state.namaWilayah}
+                    onChange={(e) =>
+                      metadataEditor.actions.updateNamaWilayah(e.target.value)
+                    }
                     placeholder="Nama wilayah (dari spatialFeature.refWilayah)…"
                     style={{ flex: 1 }}
                   />
@@ -534,10 +759,19 @@ export default function FocusCard() {
                   <label style={{ minWidth: 140 }}>ID Wilayah</label>
                   <input
                     type="text"
-                    value={tempId}
-                    onChange={(e) => setTempId(e.target.value)}
+                    value={metadataEditor.state.idWilayah}
+                    onChange={(e) =>
+                      metadataEditor.actions.updateIdWilayah(e.target.value)
+                    }
                     placeholder="ID wilayah (dari uuid/id)…"
-                    style={{ flex: 1 }}
+                    readOnly
+                    style={{
+                      flex: 1,
+                      backgroundColor: "#f3f4f6",
+                      cursor: "not-allowed",
+                      opacity: 0.7,
+                    }}
+                    title="ID Wilayah tidak dapat diubah"
                   />
                 </div>
 
@@ -553,74 +787,235 @@ export default function FocusCard() {
                   <button
                     type="button"
                     className="iconbtn"
-                    onClick={addRow}
-                    title="Tambah baris"
+                    onClick={metadataEditor.actions.addAttribute}
+                    title="Tambah atribut baru"
                   >
                     <span className="iconfocuscard">add</span>
                   </button>
                 </div>
 
-                {loadingProps && (
+                {metadataEditor.state.isLoading && (
                   <div className="muted" style={{ marginTop: 6 }}>
-                    Memuat atribut dari feature...
+                    Menyimpan perubahan...
                   </div>
                 )}
 
                 <div style={{ display: "grid", gap: 8, marginTop: 6 }}>
-                  {rows.map((r) => (
+                  {metadataEditor.state.editableAttributes.map((attr) => (
                     <div
-                      key={r.id}
+                      key={attr.id}
                       className="row"
                       style={{
                         display: "grid",
                         gridTemplateColumns: "1fr 1fr 40px",
                         gap: 8,
                         alignItems: "center",
+                        border: attr.hasError ? "1px solid #ef4444" : "none",
+                        borderRadius: 4,
+                        padding: 4,
                       }}
                     >
                       <input
                         type="text"
-                        value={r.key}
+                        value={attr.attributeKey}
                         onChange={(e) =>
-                          updateRow(r.id, { key: e.target.value })
+                          metadataEditor.actions.updateAttribute(
+                            attr.id,
+                            "attributeKey",
+                            e.target.value
+                          )
                         }
-                        placeholder="key"
-                        disabled={r.locked}
-                        title={r.locked ? "Kunci resmi; tidak bisa diubah" : ""}
+                        placeholder="attributeName"
+                        readOnly={!attr.isNew} // Make keys read-only for existing attributes
+                        style={{
+                          borderColor: attr.hasError ? "#ef4444" : undefined,
+                          backgroundColor: !attr.isNew ? "#f3f4f6" : undefined,
+                          cursor: !attr.isNew ? "not-allowed" : undefined,
+                          opacity: !attr.isNew ? 0.7 : undefined,
+                        }}
+                        title={
+                          !attr.isNew
+                            ? "Attribute key tidak dapat diubah setelah disimpan"
+                            : "Attribute key akan otomatis ditambahi prefix 'spatialFeature.'"
+                        }
                       />
                       <input
                         type="text"
-                        value={r.value}
+                        value={attr.attributeValue}
                         onChange={(e) =>
-                          updateRow(r.id, { value: e.target.value })
+                          metadataEditor.actions.updateAttribute(
+                            attr.id,
+                            "attributeValue",
+                            e.target.value
+                          )
                         }
                         placeholder="value"
+                        style={{
+                          borderColor: attr.hasError ? "#ef4444" : undefined,
+                        }}
                       />
                       <button
                         type="button"
-                        className={`iconbtn ${r.locked ? "ghost" : "danger"}`}
-                        onClick={() => removeRow(r.id)}
-                        disabled={r.locked}
-                        title={
-                          r.locked
-                            ? "Kunci resmi tidak boleh dihapus"
-                            : "Hapus baris"
+                        className={`iconbtn ${attr.isNew ? "danger" : "ghost"}`}
+                        onClick={() =>
+                          metadataEditor.actions.removeAttribute(attr.id)
                         }
+                        title={attr.isNew ? "Hapus atribut" : "Hapus atribut"}
                       >
-                        <span className="iconfocuscard">
-                          {r.locked ? "lock" : "delete"}
-                        </span>
+                        <span className="iconfocuscard">delete</span>
                       </button>
+                      {attr.hasError && (
+                        <div
+                          style={{
+                            gridColumn: "1 / -1",
+                            fontSize: 12,
+                            color: "#ef4444",
+                            marginTop: 2,
+                          }}
+                        >
+                          {attr.errorMessage}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
 
                 <div className="row end" style={{ gap: 8, marginTop: 10 }}>
-                  <button className="btn-save" onClick={saveAll}>
-                    <span className="iconfocuscard">save</span> Simpan
+                  <button
+                    className="btn-save"
+                    onClick={saveAll}
+                    disabled={
+                      metadataEditor.state.isLoading ||
+                      !metadataEditor.state.hasUnsavedChanges
+                    }
+                    style={{
+                      opacity:
+                        metadataEditor.state.isLoading ||
+                        !metadataEditor.state.hasUnsavedChanges
+                          ? 0.6
+                          : 1,
+                      cursor:
+                        metadataEditor.state.isLoading ||
+                        !metadataEditor.state.hasUnsavedChanges
+                          ? "not-allowed"
+                          : "pointer",
+                    }}
+                  >
+                    <span className="iconfocuscard">
+                      {metadataEditor.state.isLoading
+                        ? "hourglass_empty"
+                        : "save"}
+                    </span>
+                    {metadataEditor.state.isLoading ? "Menyimpan..." : "Simpan"}
                   </button>
-                  <button className="btn-cancel" onClick={cancelAll}>
+                  <button
+                    className="btn-cancel"
+                    onClick={cancelAll}
+                    disabled={metadataEditor.state.isLoading}
+                    style={{
+                      opacity: metadataEditor.state.isLoading ? 0.6 : 1,
+                      cursor: metadataEditor.state.isLoading
+                        ? "not-allowed"
+                        : "pointer",
+                    }}
+                  >
                     <span className="iconfocuscard">cancel</span> Batal
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {showSaveConfirmation &&
+        createPortal(
+          <div
+            className="modal-overlay"
+            onClick={cancelSave}
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(0,0,0,0.4)",
+              zIndex: 10000,
+            }}
+          >
+            <div
+              className="modal-panel"
+              onClick={(e) => e.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              style={{
+                position: "absolute",
+                left: "50%",
+                top: "50%",
+                transform: "translate(-50%, -50%)",
+                maxWidth: 400,
+                width: "90%",
+                background: "#fff",
+                borderRadius: 12,
+                boxShadow: "0 12px 24px rgba(0,0,0,.25)",
+                overflow: "hidden",
+              }}
+            >
+              <div style={{ padding: "24px", textAlign: "center" }}>
+                <div
+                  style={{
+                    fontSize: "18px",
+                    fontWeight: 600,
+                    marginBottom: "16px",
+                  }}
+                >
+                  Apakah kamu yakin?
+                </div>
+                <div
+                  style={{
+                    fontSize: "14px",
+                    color: "#6b7280",
+                    marginBottom: "24px",
+                  }}
+                >
+                  Perubahan metadata akan disimpan dan layer akan dimuat ulang
+                  secara otomatis.
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "12px",
+                    justifyContent: "center",
+                  }}
+                >
+                  <button
+                    className="btn-cancel"
+                    onClick={cancelSave}
+                    style={{
+                      padding: "10px 20px",
+                      border: "1px solid #d1d5db",
+                      background: "#fff",
+                      color: "#374151",
+                      borderRadius: 6,
+                      fontSize: "14px",
+                      fontWeight: 500,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Tidak
+                  </button>
+                  <button
+                    className="btn-save"
+                    onClick={confirmSave}
+                    style={{
+                      padding: "10px 20px",
+                      border: "none",
+                      background: "#3b82f6",
+                      color: "#fff",
+                      borderRadius: 6,
+                      fontSize: "14px",
+                      fontWeight: 500,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Ya
                   </button>
                 </div>
               </div>

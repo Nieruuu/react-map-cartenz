@@ -64,7 +64,8 @@ tax-map-react/
    
 │   ├── hooks/                   # Custom React hooks
 │   │   ├── useLayersStore.ts    # Layer management state
-│   │   └── useMapStore.ts       # Map state management
+│   │   ├── useMapStore.ts       # Map state management
+│   │   └── useMetadataEditor.ts # Metadata editing functionality
    
 │   ├── lib/                     # Core utilities and API
 │   │   ├── api/                 # API layer
@@ -237,12 +238,18 @@ State Update ← Transformer ← JSON Parse ← Raw Response
 - **Clean UI**: Removed duplicate buttons and streamlined interface
 
 ### FocusCard (`src/components/FocusCard.tsx`)
-- **Metadata Editing**: Comprehensive attribute editing interface
-- **Selective Display**: Shows only essential attributes (Nama wilayah, ID wilayah)
-- **Dynamic Attributes**: Allows users to add custom metadata
+- **Advanced Metadata Editing**: Comprehensive attribute editing interface with real-time validation
+- **Selective Display**: Shows only essential attributes (Nama wilayah, ID wilayah) in UI
+- **Dynamic Attribute Management**: Allows users to add, edit, and remove custom metadata
 - **QGIS Compatibility**: Optimized attribute structure for QGIS export
-- **Clean Interface**: Removed unused functions and simplified code
-- **Attribute Management**: Internal state management for all attributes
+- **Smart Attribute Handling**: Automatic spatialFeature prefix addition for user-friendly input
+- **Optimistic UI Updates**: Immediate visual feedback with rollback on failure
+- **Comprehensive Error Handling**: Detailed error messages and loading states
+- **Attribute Preservation**: Complete attribute structure preservation during updates
+- **ID Extraction**: Proper attribute ID extraction and inclusion in PATCH requests
+- **Edit Mode Toggle**: Seamless switching between view and edit modes
+- **Field Validation**: Real-time validation for attribute keys and values
+- **Auto-Close Mechanism**: Intelligent UI interaction detection for automatic card closing
 
 ### ApiLoadPanel (`src/components/ApiLoadPanel.tsx`)
 - **Advanced Filtering**: Filter by type code and name patterns
@@ -252,11 +259,21 @@ State Update ← Transformer ← JSON Parse ← Raw Response
 - **WIB Timezone Support**: Display timestamps in local timezone
 
 ### Data Loading Feature (`src/features/loadFromApi.ts`)
-- **WKT Conversion**: Convert API geometry to OpenLayers features
-- **Property Mapping**: Preserve all feature attributes
-- **Layer Creation**: Create styled vector layers
+- **WKT Conversion**: Convert API geometry to OpenLayers features using simplified converter
+- **Property Mapping**: Preserve all feature attributes with QGIS optimization
+- **Layer Creation**: Create styled vector layers with proper naming conventions
 - **Store Integration**: Add layers to Zustand state management
-- **ID Formatting**: Proper ID formatting for QGIS compatibility
+- **ID Formatting**: Proper ID formatting without trailing suffixes for QGIS compatibility
+
+### Metadata Editor Hook (`src/hooks/useMetadataEditor.ts`)
+- **Dual Matching Strategy**: ID-first matching with key-based fallback for attribute updates
+- **Pre-flight GET Requests**: Fetch current complete attribute data before updates
+- **Complete Field Preservation**: Preserve all original fields (id, dataType, rowIdentifier, etc.)
+- **Selective Field Updates**: Only modify user-editable fields while maintaining system fields
+- **Comprehensive Logging**: Detailed console logging for debugging attribute updates
+- **Error Recovery**: Robust error handling with detailed status reporting
+- **Validation System**: Real-time attribute validation with user-friendly error messages
+- **State Management**: Optimistic updates with rollback capabilities
 
 ## Spatial Feature Types
 
@@ -459,11 +476,22 @@ The authentication system provides comprehensive state management:
 - Simplified SmartGovLoader interface by removing duplicate functionality
 - Fixed navigation issues and modal positioning problems
 
+### Metadata Editing System Implementation
+- **Complete Attribute Management**: Full CRUD operations for spatial feature metadata
+- **Smart Attribute Matching**: Dual strategy matching ensures proper ID preservation
+- **Payload Formatting**: Correct PATCH request structure for both existing and new attributes
+- **User-Friendly Interface**: Automatic prefix handling and validation for attribute keys
+- **Real-Time Validation**: Comprehensive validation system with immediate feedback
+- **Error Handling**: Detailed error reporting and recovery mechanisms
+- **Performance Optimization**: Optimistic UI updates with minimal API calls
+
 ### Code Quality Improvements
 - Removed unused variables and functions across all components
 - Cleaned up imports and exports
 - Improved TypeScript compliance
 - Optimized bundle size by removing dead code
+- Enhanced debugging capabilities with comprehensive logging
+- Improved error handling and user feedback systems
 
 ---
 
@@ -472,5 +500,8 @@ The authentication system provides comprehensive state management:
 **Framework**: React 19.1.1 with TypeScript
 **Authentication System**: Enhanced with WIB timezone and state synchronization
 **Spatial Feature API**: Complete implementation with pagination and attribute handling
+**Metadata Editing System**: Advanced attribute management with real-time validation and updates
 **Environment Configuration**: Support for development and production environments
 **Code Quality**: Optimized with unused variable cleanup and performance improvements
+**API Integration**: Robust PATCH request handling with proper ID extraction and attribute preservation
+**User Experience**: Comprehensive error handling, optimistic updates, and intelligent UI interactions

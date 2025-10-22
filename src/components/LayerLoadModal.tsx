@@ -116,6 +116,14 @@ export default function LayerLoadModal({
 
   useEffect(() => {
     if (!open) return;
+
+    // Dispatch custom event when modal opens (for FocusCard auto-close)
+    window.dispatchEvent(
+      new CustomEvent("open-modal", {
+        detail: { modal: "LayerLoadModal" },
+      })
+    );
+
     refresh();
     const onUpd = () => refresh();
     window.addEventListener("datasets-updated", onUpd as any);

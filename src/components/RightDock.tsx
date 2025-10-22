@@ -48,11 +48,74 @@ export default function RightDock() {
     };
     window.addEventListener("highlight-layer-entry", onHighlight as any);
 
+    // Handle refresh requests from layer reload
+    const handleRightDockRefresh = (event: Event) => {
+      const { layerId, typeCode, reason } =
+        (event as CustomEvent<any>).detail || {};
+      console.log(
+        `RightDock refresh requested for layer ${layerId}, type ${typeCode}, reason: ${reason}`
+      );
+
+      // Force re-render of the layer list by triggering a state update
+      setOpen((prev) => prev); // This triggers a re-render
+
+      // If the layer was previously selected, maintain selection
+      if (selectedLayerId === layerId) {
+        // Scroll to the layer to ensure it's visible
+        setTimeout(() => {
+          itemRefs.current[layerId]?.scrollIntoView?.({
+            block: "nearest",
+            behavior: "smooth",
+          });
+        }, 100);
+      }
+    };
+    window.addEventListener(
+      "rightdock-refresh-requested",
+      handleRightDockRefresh
+    );
+
+    // Handle UI synchronization completion
+    const handleUISynchronizationComplete = (event: Event) => {
+      const { layerId, originalLayerId, featureId, components } =
+        (event as CustomEvent<any>).detail || {};
+      console.log(
+        `UI synchronization complete for layer ${layerId}, components: ${components?.join(
+          ", "
+        )}`
+      );
+
+      // If this layer was previously selected, update the selection to the new layer ID
+      if (selectedLayerId === originalLayerId && layerId !== originalLayerId) {
+        setSelectedLayerId(layerId);
+
+        // Scroll to the new layer
+        setTimeout(() => {
+          itemRefs.current[layerId]?.scrollIntoView?.({
+            block: "nearest",
+            behavior: "smooth",
+          });
+        }, 100);
+      }
+    };
+    window.addEventListener(
+      "ui-synchronization-complete",
+      handleUISynchronizationComplete
+    );
+
     return () => {
       window.removeEventListener("open-rightdock", openDock);
       window.removeEventListener("highlight-layer-entry", onHighlight as any);
+      window.removeEventListener(
+        "rightdock-refresh-requested",
+        handleRightDockRefresh
+      );
+      window.removeEventListener(
+        "ui-synchronization-complete",
+        handleUISynchronizationComplete
+      );
     };
-  }, []);
+  }, [selectedLayerId]);
 
   // helper kecil: ambil label dari feature, bukan nama layer
   const pickFeatureLabel = (ft: any, mode: "nama" | "kode", fallback = "") => {
@@ -144,6 +207,13 @@ export default function RightDock() {
       setExpandedId(id);
       const L = layers.find((l) => l.id === id);
       setTempName(L?.name || "");
+
+      // Dispatch custom event to notify FocusCard to close
+      window.dispatchEvent(
+        new CustomEvent("ui-panel-opened", {
+          detail: { source: "rightdock-edit", layerId: id },
+        })
+      );
     }
   };
 
