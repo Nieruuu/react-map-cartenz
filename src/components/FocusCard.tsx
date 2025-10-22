@@ -203,6 +203,44 @@ export default function FocusCard() {
       metadataEditor.actions.startEditing(spatialFeature);
     };
 
+    const requestFeatureProps = (
+      targetLayerId:
+        | string
+        | number
+        | null
+        | undefined = openLayerIdRef.current,
+      targetFeatureId: string | number | null | undefined = openIdRef.current
+    ) => {
+      const resolvedLayerId =
+        targetLayerId ?? (focus as any)?.layerId ?? openLayerIdRef.current;
+      const resolvedFeatureId =
+        targetFeatureId ?? (focus as any)?.id ?? openIdRef.current;
+
+      if (
+        resolvedLayerId === null ||
+        resolvedLayerId === undefined ||
+        resolvedFeatureId === null ||
+        resolvedFeatureId === undefined
+      ) {
+        return;
+      }
+
+      openLayerIdRef.current = resolvedLayerId;
+      openIdRef.current = resolvedFeatureId;
+
+      // Ensure the next response updates the editor with fresh data
+      window.removeEventListener("feature-props-response", onResp as any);
+      window.addEventListener("feature-props-response", onResp as any, {
+        once: true,
+      });
+
+      window.dispatchEvent(
+        new CustomEvent("request-feature-props", {
+          detail: { id: resolvedFeatureId, layerId: resolvedLayerId },
+        })
+      );
+    };
+
     // Listen for success/error events from the metadata editor
     const onPropsApplied = (ev: Event) => {
       const { id: rid, layerId: rlayer } =
@@ -216,31 +254,28 @@ export default function FocusCard() {
 
       // Refresh the focus data to show updated values
       setTimeout(() => {
-        window.dispatchEvent(
-          new CustomEvent("request-feature-props", {
-            detail: { id: (focus as any)?.id, layerId: (focus as any).layerId },
-          })
-        );
+        requestFeatureProps(rlayer, rid);
       }, 100);
     };
 
     // Listen for layer reload completion to refresh focus data
     const onLayerReloaded = (ev: Event) => {
-      const { layerId, newLayerId } = (ev as CustomEvent<any>).detail || {};
+      const { originalLayerId, newLayerId, featureId } =
+        (ev as CustomEvent<any>).detail || {};
 
       // Check if this is the layer we're interested in
-      if (layerId !== openLayerIdRef.current) return;
+      if (originalLayerId !== openLayerIdRef.current) return;
+
+      if (newLayerId) {
+        openLayerIdRef.current = newLayerId;
+      }
+      if (featureId) {
+        openIdRef.current = featureId;
+      }
 
       // Refresh the focus data with the new layer data
       setTimeout(() => {
-        window.dispatchEvent(
-          new CustomEvent("request-feature-props", {
-            detail: {
-              id: (focus as any)?.id,
-              layerId: newLayerId || layerId, // Use new layer ID if provided
-            },
-          })
-        );
+        requestFeatureProps(newLayerId || originalLayerId, featureId);
       }, 200); // Slightly longer delay to ensure layer is fully reloaded
     };
 
@@ -256,18 +291,11 @@ export default function FocusCard() {
       setToast({ type: "error", msg: `Gagal menyimpan: ${error}` });
     };
 
-    window.addEventListener("feature-props-response", onResp as any, {
-      once: true,
-    });
     window.addEventListener("feature-props-applied", onPropsApplied as any);
     window.addEventListener("feature-props-error", onPropsError as any);
     window.addEventListener("layer-reloaded", onLayerReloaded as any);
 
-    window.dispatchEvent(
-      new CustomEvent("request-feature-props", {
-        detail: { id: (focus as any)?.id, layerId: (focus as any).layerId },
-      })
-    );
+    requestFeatureProps();
 
     // fallback supaya gak loading abadi
     setTimeout(() => {
@@ -306,6 +334,7 @@ export default function FocusCard() {
 
     // Clean up event listeners when component unmounts or editing ends
     return () => {
+      window.removeEventListener("feature-props-response", onResp as any);
       window.removeEventListener(
         "feature-props-applied",
         onPropsApplied as any
