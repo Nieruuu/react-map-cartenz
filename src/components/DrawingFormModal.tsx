@@ -11,6 +11,7 @@ interface DrawingFormModalProps {
   onSave: (formData: FormData[]) => void;
   featureCount: number;
   isLoading: boolean;
+  isMultiFeature: boolean;
 }
 
 const DrawingFormModal: React.FC<DrawingFormModalProps> = ({
@@ -19,9 +20,12 @@ const DrawingFormModal: React.FC<DrawingFormModalProps> = ({
   onSave,
   featureCount,
   isLoading,
+  isMultiFeature,
 }) => {
+  const effectiveFeatureCount = isMultiFeature ? 1 : featureCount;
+
   const [formData, setFormData] = useState<FormData[]>(
-    Array.from({ length: featureCount }, () => ({
+    Array.from({ length: effectiveFeatureCount }, () => ({
       layerType: "",
       regionName: "",
     }))
@@ -30,13 +34,14 @@ const DrawingFormModal: React.FC<DrawingFormModalProps> = ({
 
   // Initialize form data when feature count changes
   useEffect(() => {
-    setFormData(
-      Array.from({ length: featureCount }, (_, index) => ({
-        layerType: formData[index]?.layerType || "",
-        regionName: formData[index]?.regionName || "",
+    setFormData((prev) =>
+      Array.from({ length: effectiveFeatureCount }, (_, index) => ({
+        layerType: prev[index]?.layerType || "",
+        regionName: prev[index]?.regionName || "",
       }))
     );
-  }, [featureCount]);
+    setErrors({});
+  }, [effectiveFeatureCount]);
 
   // Add keyboard shortcuts
   useEffect(() => {
@@ -160,7 +165,7 @@ const DrawingFormModal: React.FC<DrawingFormModalProps> = ({
             <span className="icon" style={{ color: "#0ea5e9" }}>
               edit_note
             </span>
-            Informasi Polygon
+            {isMultiFeature ? "Informasi MultiPolygon" : "Informasi Polygon"}
           </h2>
           <button
             onClick={handleClose}
@@ -205,7 +210,11 @@ const DrawingFormModal: React.FC<DrawingFormModalProps> = ({
               lineHeight: "1.5",
             }}
           >
-            {featureCount === 1
+            {isMultiFeature
+              ? featureCount === 1
+                ? "Mode MultiPolygon aktif. Polygon yang digambar akan disimpan sebagai satu feature."
+                : `Mode MultiPolygon aktif. ${featureCount} polygon akan digabung menjadi satu feature.`
+              : featureCount === 1
               ? "Lengkapi informasi untuk polygon yang telah digambar:"
               : `Lengkapi informasi untuk ${featureCount} polygon yang telah digambar:`}
           </p>
@@ -231,8 +240,19 @@ const DrawingFormModal: React.FC<DrawingFormModalProps> = ({
                   color: "#374151",
                 }}
               >
-                Polygon {index + 1}
+                {isMultiFeature ? "MultiPolygon" : `Polygon ${index + 1}`}
               </h3>
+              {isMultiFeature && featureCount > 1 && (
+                <div
+                  style={{
+                    fontSize: "12px",
+                    color: "#6b7280",
+                    marginBottom: "12px",
+                  }}
+                >
+                  {featureCount} polygon akan digabung menjadi satu feature.
+                </div>
+              )}
 
               <div style={{ marginBottom: "12px" }}>
                 <label

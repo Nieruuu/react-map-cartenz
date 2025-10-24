@@ -5,6 +5,7 @@ interface DrawingToolbarProps {
   onCancel: () => void;
   featureCount: number;
   isLoading: boolean;
+  isMultiMode: boolean;
 }
 
 const DrawingToolbar: React.FC<DrawingToolbarProps> = ({
@@ -12,6 +13,7 @@ const DrawingToolbar: React.FC<DrawingToolbarProps> = ({
   onCancel,
   featureCount,
   isLoading,
+  isMultiMode,
 }) => {
   // Add keyboard shortcuts
   useEffect(() => {
@@ -65,6 +67,8 @@ const DrawingToolbar: React.FC<DrawingToolbarProps> = ({
         <span>
           {featureCount === 0
             ? "Mulai menggambar polygon..."
+            : isMultiMode
+            ? `${featureCount === 1 ? "1 polygon" : `${featureCount} polygon`} akan digabung menjadi 1 MultiPolygon`
             : featureCount === 1
             ? "1 polygon digambar"
             : `${featureCount} polygon digambar`}
