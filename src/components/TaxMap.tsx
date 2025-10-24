@@ -33,6 +33,7 @@ import shp from "shpjs";
 import { useMapStore } from "../hooks/useMapStore";
 import { styleFromCfg, useLayersStore } from "../hooks/useLayersStore";
 import { useMetadataEditor } from "../hooks/useMetadataEditor";
+import { useAppLoading } from "../hooks/useLoadingState";
 import type {
   SpatialFeature,
   SpatialFeatureAttribute,
@@ -745,6 +746,10 @@ export default function TaxMap() {
   // Mount metadata editor hook to handle API-based feature updates
   const metadataEditor = useMetadataEditor();
 
+  // Loading state management
+  const { startLoading, updateProgress, finishLoading, showError } =
+    useAppLoading();
+
   useEffect(() => {
     if (!mapDiv.current) return;
 
@@ -800,76 +805,71 @@ export default function TaxMap() {
       }
     };
 
-    // Auto load contoh
+    // Auto load "Batas Kecamatan Kabupaten Badung" from API
     (async () => {
       if (autoLoadOnceRef.current) return;
       autoLoadOnceRef.current = true;
 
       try {
-        const ab = await fetch(ADMIN_SRC).then((r) => r.arrayBuffer());
-        const parsed = await shp(ab);
-        const fc = pickFeatureCollection(parsed);
-        if (!fc) return;
+        console.log(
+          "Loading 'Batas Kecamatan Kabupaten Badung' layer from API..."
+        );
 
-        const fmt = geojsonFmtRef.current!;
-        const feats = fmt.readFeatures(fc, {
-          dataProjection: "EPSG:4326",
-          featureProjection: "EPSG:3857",
-        }) as any[];
-        assignFeatureMetadata(feats);
+        // Start loading with initial message
+        startLoading("Menghubungkan ke server...");
+        updateProgress(10);
 
-        // VALIDASI & FIT AMAN
-        const cloned = feats.map((f) => f.clone());
-        const validFeats = cloned.filter((ft: any) => {
-          const g = ft.getGeometry?.();
-          if (!g) return false;
-          const e = g.getExtent();
-          return (
-            Number.isFinite(e[0]) &&
-            Number.isFinite(e[1]) &&
-            Number.isFinite(e[2]) &&
-            Number.isFinite(e[3])
+        // Import the load function dynamically to avoid circular dependencies
+        const { loadBatasKecamatanKabupatenBadung } = await import(
+          "../features/loadFromApi"
+        );
+
+        updateProgress(30);
+        startLoading("Mengunduh data peta...");
+
+        // Load the layer from API
+        const result = await loadBatasKecamatanKabupatenBadung();
+
+        if (!result) {
+          console.warn(
+            "Failed to load 'Batas Kecamatan Kabupaten Badung' layer from API"
           );
-        });
+          showError("Gagal memuat data peta dari server. Silakan coba lagi.");
+          return;
+        }
 
-        const src = new VectorSource({ features: validFeats });
+        updateProgress(70);
+        startLoading("Memproses data peta...");
 
-        const styleCfg = {
-          borderColor: "#10b981",
-          borderOpacity: 1,
-          borderStyle: "Solid",
-          borderWidth: 1.6,
-          fillColor: "#34d399",
-          fillOpacity: 0.25,
-          labelColor: "#1f2937",
-          labelFont: "Arial",
-          labelStroke: "#ffffff",
-          labelStrokeWidth: 3,
-          labelSize: 12,
-          labelMode: "nama",
-        } as any;
+        console.log(
+          `Successfully loaded ${result.count} features for '${result.name}' layer`
+        );
 
-        const lyr = new VectorLayer({
-          source: src,
-          style: styleFromCfg(styleCfg),
-          updateWhileInteracting: true,
-          updateWhileAnimating: true,
-        });
+        // Find the layer that was just added
+        const { layers } = useLayersStore.getState();
+        const layerEntry = layers.find((l) => l.id === result.id);
 
-        lyr.set("appKind", "kecamatan");
-        lyr.set("appName", "Batas Kecamatan");
+        if (!layerEntry) {
+          console.error("Layer not found in store after loading");
+          showError("Terjadi kesalahan saat memproses data peta.");
+          return;
+        }
 
-        map.addLayer(lyr);
+        updateProgress(85);
+        startLoading("Menampilkan peta...");
 
-        const newId = `kecamatan-${Date.now()}`;
-        addLayerToMgr({
-          id: newId,
-          name: "Batas Kecamatan",
-          kind: "kecamatan",
-          layer: lyr,
-          visible: true,
-          styleCfg,
-        });
+        // Add the layer to the map
+        map.addLayer(layerEntry.layer);
+
+        // Get the source to access features
+        const src = layerEntry.layer.getSource();
+        if (!src) {
+          console.error("Layer source not found");
+          showError("Terjadi kesalahan saat memuat layer peta.");
+          return;
+        }
+
+        const validFeats = src.getFeatures();
 
         // Safe fit
         const extent = createEmptyExtent();
@@ -883,6 +883,10 @@ export default function TaxMap() {
           });
         }
 
+        updateProgress(95);
+        startLoading("Menyelesaikan...");
+
+        // Select the first feature and set focus
         const rep = validFeats[0] as any;
         if (rep) {
           const id = String(rep.get("id") || "");
@@ -898,17 +902,34 @@ export default function TaxMap() {
             name,
             lon,
             lat,
-            layerId: newId,
+            layerId: result.id,
             geom: new GeoJSON().writeGeometryObject(geom4326),
           });
           window.dispatchEvent(
             new CustomEvent("highlight-layer-entry", {
-              detail: { layerId: newId, featureId: id },
+              detail: { layerId: result.id, featureId: id },
             })
           );
         }
-      } catch {
-        // user bisa Import + Load
+
+        // Complete loading
+        updateProgress(100);
+        setTimeout(() => {
+          finishLoading();
+        }, 500); // Small delay to show 100% completion
+      } catch (error) {
+        console.error(
+          "Error loading 'Batas Kecamatan Kabupaten Badung' layer from API:",
+          error
+        );
+
+        // Show user-friendly error message
+        const errorMessage =
+          error instanceof Error
+            ? `Gagal memuat data peta: ${error.message}`
+            : "Gagal memuat data peta dari server. Silakan coba lagi.";
+
+        showError(errorMessage);
       }
     })();
 
@@ -1633,8 +1654,7 @@ export default function TaxMap() {
                 const { setFocus } = useMapStore.getState();
                 setFocus({
                   ...(currentFocus as any),
-                  name:
-                    updatedProps.name || (currentFocus as any)?.name || "",
+                  name: updatedProps.name || (currentFocus as any)?.name || "",
                   _rawAttributes: updatedProps._rawAttributes,
                 });
               }
@@ -1650,7 +1670,8 @@ export default function TaxMap() {
                     reloadLayer,
                     updatedProps,
                     updatedRawAttributes: updatedProps._rawAttributes,
-                    updatedSpatialFeature: updatedFeatureFromEditor || undefined,
+                    updatedSpatialFeature:
+                      updatedFeatureFromEditor || undefined,
                   },
                 })
               );

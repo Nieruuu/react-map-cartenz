@@ -511,10 +511,7 @@ export default function FocusCard() {
       setToast({ type: "success", msg: "Metadata berhasil disimpan." });
 
       const resolvedLayerIdStr = String(
-        rlayer ??
-          openLayerIdRef.current ??
-          (focus as any)?.layerId ??
-          ""
+        rlayer ?? openLayerIdRef.current ?? (focus as any)?.layerId ?? ""
       );
 
       const normalizedAttributes: SpatialFeatureAttribute[] | undefined =
@@ -576,8 +573,7 @@ export default function FocusCard() {
               id: rid,
               name:
                 normalizedAttributes.find(
-                  (attr) =>
-                    attr.attributeKey === "spatialFeature.refWilayah"
+                  (attr) => attr.attributeKey === "spatialFeature.refWilayah"
                 )?.attributeValue || (focus as any)?.name,
               _rawAttributes: normalizedAttributes,
             }
@@ -825,12 +821,14 @@ export default function FocusCard() {
 
           // Include attribute if it's new or its value has changed
           if (attr.isNew && attr.attributeValue.trim() !== "") {
-            updates[attr.attributeKey] = attr.attributeValue;
+            updates[`spatialFeature.${attr.attributeKey}`] =
+              attr.attributeValue;
           } else if (
             originalAttr &&
             originalAttr.attributeValue !== attr.attributeValue
           ) {
-            updates[attr.attributeKey] = attr.attributeValue;
+            updates[`spatialFeature.${attr.attributeKey}`] =
+              attr.attributeValue;
           }
         });
 
@@ -1025,6 +1023,16 @@ export default function FocusCard() {
   if (!hasFocus) return <div style={{ display: "none" }} />;
 
   const { id, name, lon, lat } = (focus as any) || {};
+
+  // Debug logging to understand ID display issue
+  console.log(`[DEBUG] FocusCard rendering with focus data:`, {
+    focus,
+    id,
+    idType: typeof id,
+    idValue: String(id),
+    name,
+    shouldDisplayN_A: !id || id === null || id === undefined || id === "",
+  });
 
   return (
     <div className="focuscard-improved">

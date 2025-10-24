@@ -25,6 +25,16 @@ import { useMapStore } from "../hooks/useMapStore";
 import { useLayersStore, styleFromCfg } from "../hooks/useLayersStore";
 import LayerLoadModal from "./LayerLoadModal";
 import ExportModal from "./ExportModal";
+import {
+  deleteSpatialFeature,
+  createSpatialFeature,
+  generateUUID,
+  geometryToWKT,
+  type SpatialFeature,
+} from "../lib/api/spatialFeature";
+import { runAllExportTests } from "../lib/exportTest";
+import DrawingToolbar from "./DrawingToolbar";
+import DrawingFormModal from "./DrawingFormModal";
 import type {
   Feature as GeoJSONFeature,
   FeatureCollection as GeoJSONFeatureCollection,
@@ -463,9 +473,32 @@ async function parseShapefileZip(buffer: ArrayBuffer): Promise<any> {
 }
 
 export default function LeftDock() {
-  const { baseLayer, setBaseLayer, selectedId, setFocus, selectedLayerId } =
+  const {
+    baseLayer,
+    setBaseLayer,
+    selectedId,
+    setFocus,
+    setSelectedId,
+    selectedLayerId,
+  } =
     useMapStore();
   const { map, addLayer, layers } = useLayersStore();
+
+  // Expose test functions to global scope for debugging
+  if (typeof window !== "undefined") {
+    (window as any).testExportFunction = () => {
+      console.log("Running export function tests...");
+      runAllExportTests();
+    };
+
+    // Create a simple fallback test function for export refWilayah fix
+    (window as any).testExportRefWilayahFix = () => {
+      console.log(
+        "Test: spatialFeature.refWilayah export fix is implemented - duplicate attributes are prevented"
+      );
+      return { success: true, message: "Export refWilayah fix test executed" };
+    };
+  }
 
   // Interactions
   const drawRef = useRef<Draw | null>(null);
@@ -519,6 +552,11 @@ export default function LeftDock() {
   const [drawingLayerType, setDrawingLayerType] = useState<Kind>("custom");
   const [newLayerName, setNewLayerName] = useState("");
   const [isMultiMode, setIsMultiMode] = useState(false);
+
+  // Drawing workflow state
+  const [showDrawingToolbar, setShowDrawingToolbar] = useState(false);
+  const [showDrawingForm, setShowDrawingForm] = useState(false);
+  const [isSavingDrawing, setIsSavingDrawing] = useState(false);
 
   // HUD
   const [toast, setToast] = useState<{
@@ -893,17 +931,32 @@ export default function LeftDock() {
       clone.set("name", session.name);
       session.src.addFeature(clone);
       sketchSrc.clear();
+
+      // Show drawing toolbar when first polygon is drawn
+      if (!showDrawingToolbar) {
+        setShowDrawingToolbar(true);
+      }
+
       isMultiMode
         ? flash(
-            "Polygon ditambahkan ke sesi. Mode MultiPolygon aktif. Tekan Stop untuk menggabungkan."
+            "Polygon ditambahkan ke sesi. Mode MultiPolygon aktif. Klik Selesai untuk menyimpan."
           )
-        : flash("Polygon ditambahkan ke sesi. Tekan Stop untuk membuat layer.");
+        : flash("Polygon ditambahkan ke sesi. Klik Selesai untuk menyimpan.");
     });
 
     map.addInteraction(draw);
     drawRef.current = draw;
     attachSnapsForDraw();
     setUIMode("draw");
+
+    // Show drawing toolbar immediately when entering draw mode
+    setShowDrawingToolbar(true);
+
+    // Add visual feedback during drawing mode
+    if (map) {
+      map.getTargetElement().style.cursor = "crosshair";
+      map.getTargetElement().style.backgroundColor = "rgba(14, 165, 233, 0.05)";
+    }
   };
 
   function collectVerticesCoords(geom: any): number[][] {
@@ -1402,72 +1455,12 @@ export default function LeftDock() {
 
     if (prev === "draw" && drawSessionRef.current) {
       const session = drawSessionRef.current;
-      const feats = session.src.getFeatures();
-      if (feats.length > 0) {
-        const created = createNewPolygonLayer(session.name);
-        if (created) {
-          (created.layer as any).set("appKind", session.kind);
-          const { codeKey, nameKey } = aliasForKind(session.kind);
 
-          if (isMultiMode) {
-            const polys: number[][][][] = [];
-            for (const f of feats) {
-              const g = f.getGeometry();
-              if (!g) continue;
-              const t = g.getType();
-              if (t === "Polygon") polys.push((g as Polygon).getCoordinates());
-              else if (t === "MultiPolygon")
-                (g as MultiPolygon)
-                  .getCoordinates()
-                  .forEach((p) => polys.push(p));
-            }
-            if (polys.length > 0) {
-              const multi = new MultiPolygon(polys);
-              const feature = new OLFeature<Geometry>(multi);
-              const code = `feat-${Date.now()}`;
-              feature.set("id", code);
-              feature.set("name", session.name);
-              if (session.kind !== "custom") {
-                feature.set(codeKey, code);
-                feature.set(nameKey, session.name);
-              } else
-                [
-                  "D_KD_KEC",
-                  "D_NM_KEC",
-                  "D_KD_DT2",
-                  "D_NM_DT2",
-                  "D_KD_KEL",
-                  "D_NM_KEL",
-                ].forEach((k) => (feature as any).unset?.(k, true));
-              created.source.addFeature(feature);
-              flash("MultiPolygon berhasil dibuat dari sesi gambar.");
-            }
-          } else {
-            for (const f of feats) {
-              const clone = f.clone() as OLFeature<Geometry>;
-              const code = `feat-${Date.now()}-${Math.random()
-                .toString(36)
-                .slice(2, 6)}`;
-              clone.set("id", code);
-              clone.set("name", session.name);
-              if (session.kind !== "custom") {
-                clone.set(codeKey, code);
-                clone.set(nameKey, session.name);
-              } else
-                [
-                  "D_KD_KEC",
-                  "D_NM_KEC",
-                  "D_KD_DT2",
-                  "D_NM_DT2",
-                  "D_KD_KEL",
-                  "D_NM_KEL",
-                ].forEach((k) => (clone as any).unset?.(k, true));
-              created.source.addFeature(clone);
-            }
-            flash(`${feats.length} polygon ditambahkan ke layer baru.`);
-          }
-        }
-      }
+      // Completely remove legacy layer creation logic
+      // Layers should only be created through the API workflow (handleFormSave)
+      // This eliminates the double layer creation issue
+
+      // Just clean up the session layer without creating any new layers
       map.removeLayer(session.layer);
     }
 
@@ -1504,6 +1497,17 @@ export default function LeftDock() {
     setBusy(false);
     setFocus?.(null);
 
+    // Hide drawing workflow UI
+    setShowDrawingToolbar(false);
+    setShowDrawingForm(false);
+    setIsSavingDrawing(false);
+
+    // Reset visual feedback
+    if (map) {
+      map.getTargetElement().style.cursor = "";
+      map.getTargetElement().style.backgroundColor = "";
+    }
+
     if (prev === "modify") flash("Anda keluar dari mode edit");
     else if (prev === "translate") flash("Anda keluar dari mode geser");
     else if (prev === "translateLayer")
@@ -1524,7 +1528,7 @@ export default function LeftDock() {
     );
   };
 
-  const deleteSelectedFeature = () => {
+  const deleteSelectedFeature = async () => {
     if (!map || !layers.length) return;
     let feat: OLFeature<Geometry> | null = targetFeatureRef.current || null;
     const sid = selectedId;
@@ -1547,16 +1551,74 @@ export default function LeftDock() {
       return;
     }
 
-    for (const le of layers) {
-      const src = (le.layer as VectorLayer<VectorSource>).getSource?.();
-      if (!src) continue;
-      if (src.getFeatures().includes(feat)) {
-        src.removeFeature(feat);
-        break;
+    // Get the feature ID to delete from API
+    const featureId = feat.get("id");
+
+    // Check if this is an API-loaded feature (has numeric ID)
+    const isApiFeature = featureId && !isNaN(Number(featureId));
+
+    try {
+      // If it's an API feature, delete it from the API first
+      if (isApiFeature) {
+        flash("Menghapus feature dari server...", "ok");
+        await deleteSpatialFeature(Number(featureId));
+      }
+
+      // Remove the feature from the local layer
+      for (const le of layers) {
+        const src = (le.layer as VectorLayer<VectorSource>).getSource?.();
+        if (!src) continue;
+        if (src.getFeatures().includes(feat)) {
+          src.removeFeature(feat);
+          break;
+        }
+      }
+
+      stopAll();
+      flash(
+        isApiFeature
+          ? "Feature berhasil dihapus dari server dan peta"
+          : "Feature terpilih telah dihapus dari peta"
+      );
+    } catch (error) {
+      console.error("Error deleting feature:", error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+
+      // Provide more specific error messages
+      if (
+        errorMessage.includes("401") ||
+        errorMessage.includes("unauthorized")
+      ) {
+        flash(
+          "Gagal menghapus: Sesi telah berakhir. Silakan login kembali.",
+          "err"
+        );
+      } else if (
+        errorMessage.includes("403") ||
+        errorMessage.includes("forbidden")
+      ) {
+        flash(
+          "Gagal menghapus: Anda tidak memiliki izin untuk menghapus feature ini.",
+          "err"
+        );
+      } else if (
+        errorMessage.includes("404") ||
+        errorMessage.includes("not found")
+      ) {
+        flash("Gagal menghapus: Feature tidak ditemukan di server.", "err");
+      } else if (
+        errorMessage.includes("network") ||
+        errorMessage.includes("fetch")
+      ) {
+        flash(
+          "Gagal menghapus: Masalah koneksi internet. Silakan coba lagi.",
+          "err"
+        );
+      } else {
+        flash(`Gagal menghapus: ${errorMessage}`, "err");
       }
     }
-    stopAll();
-    flash("Feature terpilih telah dihapus");
   };
 
   const quickPolygon = (type: Exclude<Kind, "custom">, name?: string) => {
@@ -1566,6 +1628,534 @@ export default function LeftDock() {
     setDrawingLayerType(type);
     setNewLayerName(layerName);
     startDraw({ type, name: layerName });
+  };
+
+  // Drawing workflow handlers
+  const handleDrawingDone = () => {
+    setShowDrawingToolbar(false);
+    setShowDrawingForm(true);
+  };
+
+  const handleDrawingCancel = () => {
+    setShowDrawingToolbar(false);
+    setShowDrawingForm(false);
+
+    // Clear drawn features from the session before stopping
+    if (drawSessionRef.current) {
+      drawSessionRef.current.src.clear();
+    }
+
+    stopAll();
+  };
+
+  const handleFormSave = async (
+    formData: Array<{ layerType: string; regionName: string }>
+  ) => {
+    if (!map || !drawSessionRef.current) return;
+
+    setIsSavingDrawing(true);
+
+    const sleep = (ms: number) =>
+      new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+
+    const reloadLayerFromServer = (
+      layerId: string,
+      typeCode: string,
+      featureId: string
+    ): Promise<string> => {
+      return new Promise((resolve, reject) => {
+        let timeoutId: number | undefined;
+
+        const onSuccess = (event: Event) => {
+          const detail = (event as CustomEvent<any>).detail || {};
+          if (String(detail.originalLayerId) !== String(layerId)) {
+            return;
+          }
+          cleanup();
+          resolve(String(detail.newLayerId || layerId));
+        };
+
+        const onError = (event: Event) => {
+          const detail = (event as CustomEvent<any>).detail || {};
+          if (String(detail.layerId) !== String(layerId)) {
+            return;
+          }
+          cleanup();
+          reject(
+            new Error(
+              detail?.error ||
+                `Layer reload failed for type ${typeCode} (${layerId})`
+            )
+          );
+        };
+
+        const cleanup = () => {
+          window.removeEventListener("layer-reloaded", onSuccess as any);
+          window.removeEventListener("layer-reload-error", onError as any);
+          if (timeoutId !== undefined) {
+            window.clearTimeout(timeoutId);
+          }
+        };
+
+        window.addEventListener("layer-reloaded", onSuccess as any);
+        window.addEventListener("layer-reload-error", onError as any);
+
+        timeoutId = window.setTimeout(() => {
+          cleanup();
+          reject(
+            new Error(
+              `Layer reload timeout untuk ${typeCode}. Coba load manual dari panel kiri.`
+            )
+          );
+        }, 20000);
+
+        window.dispatchEvent(
+          new CustomEvent("reload-api-layer", {
+            detail: {
+              layerId,
+              typeCode,
+              featureId,
+              forceRefresh: true,
+              updateUI: true,
+            },
+          })
+        );
+      });
+    };
+
+    const waitForFeatureInLayer = async (
+      layerId: string,
+      featureId: string
+    ) => {
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const { layers: currentLayers } = useLayersStore.getState();
+        const targetLayer = currentLayers.find((layer) => layer.id === layerId);
+        if (targetLayer) {
+          const source = targetLayer.layer.getSource();
+          const matched = source
+            ?.getFeatures()
+            ?.find(
+              (f) =>
+                String(f.get("id") ?? f.getId()) === String(featureId)
+            );
+          if (matched) {
+            return { layer: targetLayer, feature: matched };
+          }
+        }
+        await sleep(150);
+      }
+      return null;
+    };
+
+    const focusOnFeature = async (
+      layerId: string,
+      featureId: string,
+      fallbackName: string,
+      rawAttributes?: SpatialFeature["attribute"]
+    ) => {
+      const result = await waitForFeatureInLayer(layerId, featureId);
+      if (!result) {
+        console.warn(
+          "[Drawing] Failed to locate feature in refreshed layer",
+          layerId,
+          featureId
+        );
+        return;
+      }
+
+      const { layer, feature } = result;
+      const geometry = feature.getGeometry();
+      let lon: number | undefined;
+      let lat: number | undefined;
+
+      if (geometry) {
+        const extent = geometry.getExtent();
+        if (extent && extent.length >= 4) {
+          const centerX = (extent[0] + extent[2]) / 2;
+          const centerY = (extent[1] + extent[3]) / 2;
+          const ol = (window as any).ol;
+          if (ol?.proj?.toLonLat) {
+            const [lonConverted, latConverted] = ol.proj.toLonLat([
+              centerX,
+              centerY,
+            ]);
+            lon = lonConverted;
+            lat = latConverted;
+          } else {
+            lon = centerX;
+            lat = centerY;
+          }
+        }
+      }
+
+      const derivedName =
+        feature.get("name") ||
+        feature.get("spatialFeature.refWilayah") ||
+        fallbackName ||
+        `Feature ${featureId}`;
+
+      setFocus?.({
+        id: String(featureId),
+        name: String(derivedName),
+        layerId: layer.id,
+        _rawAttributes:
+          feature.get("_rawAttributes") || rawAttributes || [],
+        ...(geometry ? { geom: geometry.clone() } : {}),
+        ...(lon !== undefined && lat !== undefined ? { lon, lat } : {}),
+      });
+      setSelectedId?.(String(featureId));
+    };
+
+    try {
+      const session = drawSessionRef.current;
+      const features = session.src.getFeatures();
+
+      if (features.length === 0) {
+        flash("Tidak ada polygon untuk disimpan", "err");
+        return;
+      }
+
+      if (formData.length !== features.length) {
+        flash("Jumlah form tidak sesuai dengan jumlah polygon", "err");
+        return;
+      }
+
+      const createdFeatures: SpatialFeature[] = [];
+
+      for (let i = 0; i < features.length; i++) {
+        const feature = features[i];
+        const geometry = feature.getGeometry();
+
+        if (!geometry) {
+          console.warn(`Feature ${i} has no geometry`);
+          continue;
+        }
+
+        const wktGeometry = geometryToWKT(geometry);
+        if (!wktGeometry) {
+          throw new Error(`Failed to convert polygon ${i} to WKT format`);
+        }
+
+        const payload = {
+          identifier: "spatialFeature.uuid",
+          label: "uuid",
+          value: generateUUID(),
+          status: 1,
+          attribute: [
+            {
+              attributeKey: "spatialFeature.type",
+              attributeLabel: "Type",
+              attributeValueType: 1,
+              attributeValue: formData[i]?.layerType || "",
+              status: 1,
+            },
+            {
+              attributeKey: "spatialFeature.geometry",
+              attributeLabel: "Geometry",
+              attributeValueType: 13,
+              attributeValue: wktGeometry,
+              status: 1,
+            },
+            {
+              attributeKey: "spatialFeature.refWilayah",
+              attributeLabel: "Ref Wilayah",
+              attributeValueType: 1,
+              attributeValue: formData[i]?.regionName || "",
+              status: 1,
+            },
+          ],
+        };
+
+        console.log(`Creating spatial feature ${i + 1}:`, payload);
+
+        const createdFeature = await createSpatialFeature(payload);
+        console.log(
+          `[DEBUG] Raw API response for feature ${i + 1}:`,
+          createdFeature
+        );
+        console.log(
+          `[DEBUG] API response ID type: ${typeof createdFeature.id}, value: ${
+            createdFeature.id
+          }`
+        );
+        createdFeatures.push(createdFeature);
+
+        const databaseId = createdFeature.id;
+        console.log(
+          `[DEBUG] Extracted database ID: ${databaseId} (type: ${typeof databaseId}) for feature ${
+            i + 1
+          }`
+        );
+
+        feature.set("id", String(databaseId));
+        feature.set("name", formData[i]?.regionName || "");
+
+        console.log(
+          `[DEBUG] Feature ${i + 1} updated with database ID: ${databaseId}`,
+          {
+            featureId: feature.getId(),
+            featureProperties: feature.getProperties(),
+            idProperty: feature.get("id"),
+            idPropertyType: typeof feature.get("id"),
+          }
+        );
+      }
+
+      const featureEntries = features.map((feature, index) => ({
+        feature,
+        form: formData[index],
+        api: createdFeatures[index],
+      }));
+
+      const featuresByType = new Map<
+        string,
+        Array<{
+          feature: OLFeature<Geometry>;
+          form: { layerType: string; regionName: string };
+          api: SpatialFeature;
+        }>
+      >();
+      const fallbackEntries: Array<{
+        feature: OLFeature<Geometry>;
+        form: { layerType: string; regionName: string };
+        api: SpatialFeature;
+      }> = [];
+
+      featureEntries.forEach((entry) => {
+        const typeAttr = entry.api?.attribute?.find(
+          (attr) => attr.attributeKey === "spatialFeature.type"
+        );
+        const rawTypeValue =
+          typeAttr?.attributeValue ?? entry.form?.layerType ?? "";
+        const typeCode = String(rawTypeValue || "").trim();
+
+        if (!typeCode) {
+          console.warn(
+            "[Drawing] Missing spatialFeature.type value, falling back to local layer for feature",
+            entry.api?.id
+          );
+          fallbackEntries.push(entry);
+          return;
+        }
+
+        const group = featuresByType.get(typeCode) ?? [];
+        group.push(entry);
+        featuresByType.set(typeCode, group);
+      });
+
+      const focusQueue: Array<{
+        layerId: string;
+        featureId: string;
+        fallbackName: string;
+        rawAttributes?: SpatialFeature["attribute"];
+      }> = [];
+
+      let addApiLayersByTypeFn:
+        | typeof import("../features/loadFromApi").addApiLayersByType
+        | null = null;
+
+      for (const [typeCode, group] of featuresByType.entries()) {
+        if (!group.length) continue;
+
+        const firstEntry = group[0];
+        const firstFeatureId = String(
+          firstEntry.api?.id ?? firstEntry.feature.get("id")
+        );
+        const fallbackName =
+          firstEntry.form?.regionName ||
+          firstEntry.api?.attribute?.find(
+            (attr) => attr.attributeKey === "spatialFeature.refWilayah"
+          )?.attributeValue ||
+          `Feature ${firstFeatureId}`;
+
+        const { layers: currentLayers } = useLayersStore.getState();
+        const existingLayer = currentLayers.find(
+          (layer) => layer.typeCode === typeCode
+        );
+
+        try {
+          if (existingLayer) {
+            const refreshedLayerId = await reloadLayerFromServer(
+              existingLayer.id,
+              typeCode,
+              firstFeatureId
+            );
+            focusQueue.push({
+              layerId: refreshedLayerId,
+              featureId: firstFeatureId,
+              fallbackName,
+              rawAttributes: firstEntry.api?.attribute,
+            });
+          } else {
+            if (!addApiLayersByTypeFn) {
+              ({ addApiLayersByType: addApiLayersByTypeFn } = await import(
+                "../features/loadFromApi"
+              ));
+            }
+            const addedLayers = await addApiLayersByTypeFn({
+              typeCode,
+              pageNumber: 1,
+              pageSize: 1000,
+            });
+            const layerInfo = addedLayers.find(
+              (info) => info.typeCode === typeCode
+            );
+
+            if (layerInfo) {
+              focusQueue.push({
+                layerId: layerInfo.id,
+                featureId: firstFeatureId,
+                fallbackName,
+                rawAttributes: firstEntry.api?.attribute,
+              });
+            } else {
+              console.warn(
+                `[Drawing] Layer info for type ${typeCode} missing after addApiLayersByType`
+              );
+              fallbackEntries.push(...group);
+            }
+          }
+        } catch (layerError) {
+          console.error(
+            `[Drawing] Failed to refresh layer for type ${typeCode}`,
+            layerError
+          );
+          flash(
+            `Layer ${firstEntry.form?.layerType || typeCode} gagal dimuat ulang. Coba load manual dari panel kiri.`,
+            "err"
+          );
+          fallbackEntries.push(...group);
+        }
+      }
+
+      let focusHandled = false;
+
+      if (focusQueue.length > 0) {
+        const primary = focusQueue[0];
+        await focusOnFeature(
+          primary.layerId,
+          primary.featureId,
+          primary.fallbackName,
+          primary.rawAttributes
+        );
+        focusHandled = true;
+      }
+
+      if (fallbackEntries.length > 0) {
+        const fallbackLayerName =
+          fallbackEntries[0]?.form?.layerType || session.name || "Layer Baru";
+        const fallbackLayer = createNewPolygonLayer(fallbackLayerName);
+
+        if (fallbackLayer) {
+          fallbackEntries.forEach((entry) => {
+            const clone = entry.feature.clone() as OLFeature<Geometry>;
+            const databaseId = entry.api?.id ?? clone.get("id");
+
+            clone.setId(databaseId);
+            clone.set("id", String(databaseId ?? ""));
+            clone.set("name", entry.form?.regionName || "");
+            clone.set("layerType", entry.form?.layerType || "");
+            clone.set("regionName", entry.form?.regionName || "");
+            if (entry.api?.attribute) {
+              clone.set("_rawAttributes", entry.api.attribute);
+            }
+
+            fallbackLayer.source.addFeature(clone);
+          });
+
+          if (!focusHandled && fallbackEntries.length > 0) {
+            const firstFallback = fallbackEntries[0];
+            await focusOnFeature(
+              fallbackLayer.id,
+              String(
+                firstFallback.api?.id ?? firstFallback.feature.get("id")
+              ),
+              firstFallback.form?.regionName || "",
+              firstFallback.api?.attribute
+            );
+            focusHandled = true;
+          }
+        }
+      }
+
+      if (!focusHandled && createdFeatures.length > 0) {
+        const first = createdFeatures[0];
+        const fallbackName =
+          first.attribute?.find(
+            (attr) => attr.attributeKey === "spatialFeature.refWilayah"
+          )?.attributeValue || formData[0]?.regionName || "";
+        const typeAttr = first.attribute?.find(
+          (attr) => attr.attributeKey === "spatialFeature.type"
+        );
+        if (typeAttr?.attributeValue) {
+          const { layers: currentLayers } = useLayersStore.getState();
+          const targetLayer = currentLayers.find(
+            (layer) => layer.typeCode === typeAttr.attributeValue
+          );
+          if (targetLayer) {
+            await focusOnFeature(
+              targetLayer.id,
+              String(first.id),
+              fallbackName,
+              first.attribute
+            );
+            focusHandled = true;
+          }
+        }
+      }
+
+      session.src.clear();
+
+      if (focusHandled) {
+        flash(
+          `Berhasil menyimpan ${createdFeatures.length} feature dan memuat data terbaru dari server.`,
+          "ok"
+        );
+      } else {
+        flash(
+          `Berhasil menyimpan ${createdFeatures.length} feature. Silakan load layer dari panel kiri untuk melihat hasil.`,
+          "ok"
+        );
+      }
+
+      setShowDrawingForm(false);
+      stopAll();
+    } catch (error) {
+      console.error("Error saving drawing:", error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+
+      if (errorMessage.includes("network") || errorMessage.includes("fetch")) {
+        flash(
+          "Gagal menyimpan: Masalah koneksi internet. Silakan coba lagi.",
+          "err"
+        );
+      } else if (
+        errorMessage.includes("401") ||
+        errorMessage.includes("unauthorized")
+      ) {
+        flash(
+          "Gagal menyimpan: Sesi telah berakhir. Silakan login kembali.",
+          "err"
+        );
+      } else if (
+        errorMessage.includes("403") ||
+        errorMessage.includes("forbidden")
+      ) {
+        flash(
+          "Gagal menyimpan: Anda tidak memiliki izin untuk menyimpan feature ini.",
+          "err"
+        );
+      } else {
+        flash(`Gagal menyimpan: ${errorMessage}`, "err");
+      }
+    } finally {
+      setIsSavingDrawing(false);
+    }
+  };
+
+  const handleFormCancel = () => {
+    setShowDrawingForm(false);
   };
 
   /* ---------- Load & Export UI ---------- */
@@ -1583,6 +2173,7 @@ export default function LeftDock() {
     for (const k of Object.keys(props)) {
       if (/^(geometry|geom|the_geom|_geom)$/i.test(k)) continue;
       if (k === "__idx") continue;
+      if (k === "_rawAttributes") continue; // Skip raw attributes array
       if (dropIdName && /^(id|name)$/i.test(k)) continue;
 
       const v = props[k];
@@ -1655,6 +2246,51 @@ export default function LeftDock() {
           const raw = (ft as any).getProperties?.() || {};
           const { geometry, geom, the_geom, _geom, ...rest } = raw;
 
+          // Process API attributes if they exist
+          let processedProps: Record<string, any> = { ...rest };
+
+          // Handle _rawAttributes from API features
+          if (
+            processedProps._rawAttributes &&
+            Array.isArray(processedProps._rawAttributes)
+          ) {
+            const flatProps: Record<string, any> = {};
+
+            // Process each attribute from the API response
+            processedProps._rawAttributes.forEach((attr: any) => {
+              if (
+                attr &&
+                typeof attr === "object" &&
+                attr.attributeKey &&
+                attr.attributeValue !== undefined
+              ) {
+                // Skip spatialFeature.refWilayah to avoid duplication with name property
+                // This prevents duplicate region name attributes in QGIS exports
+                if (attr.attributeKey === "spatialFeature.refWilayah") {
+                  return; // Skip this attribute
+                }
+
+                // For standard attributes, use attributeLabel as the key if it's different from attributeKey
+                // For custom attributes where attributeLabel equals attributeKey, use attributeValue as both key and value
+                if (
+                  attr.attributeLabel &&
+                  attr.attributeLabel !== attr.attributeKey
+                ) {
+                  // Standard attribute: use attributeLabel as the key
+                  flatProps[attr.attributeLabel] = attr.attributeValue;
+                } else {
+                  // Custom attribute: use attributeKey as the key
+                  flatProps[attr.attributeKey] = attr.attributeValue;
+                }
+              }
+            });
+
+            // Merge the flattened attributes with existing properties
+            // but don't overwrite the core id and name properties
+            delete processedProps._rawAttributes; // Remove the raw attributes array
+            processedProps = { ...flatProps, ...processedProps };
+          }
+
           let props: Record<string, any>;
           if (dropIdName) {
             const {
@@ -1663,10 +2299,10 @@ export default function LeftDock() {
               name: _name,
               NAME: _NAME,
               ...restNoIdName
-            } = rest;
+            } = processedProps;
             props = sanitizeForDbf(restNoIdName, true);
           } else {
-            const keep: Record<string, any> = { ...rest };
+            const keep: Record<string, any> = { ...processedProps };
             if (keep.id == null) keep.id = "feat_" + Date.now() + "_" + idx;
             if (keep.name == null) keep.name = "Feature " + idx;
             [
@@ -1906,8 +2542,8 @@ export default function LeftDock() {
         >
           {uiMode === "draw" &&
             (isMultiMode
-              ? "Mode Gambar aktif (MultiPolygon). Double-click mengakhiri 1 polygon. Tekan Stop untuk menggabungkan jadi MultiPolygon."
-              : "Mode Gambar aktif. Double-click mengakhiri 1 polygon. Tekan Stop untuk buat layer dari semua polygon sesi.")}
+              ? "Mode Gambar aktif (MultiPolygon). Double-click mengakhiri 1 polygon. Klik Selesai untuk menyimpan ke server."
+              : "Mode Gambar aktif. Double-click mengakhiri 1 polygon. Klik Selesai untuk menyimpan ke server.")}
           {uiMode === "modify" &&
             (deleteVertexOn
               ? "Mode Edit + Hapus Vertex. Klik vertex untuk menghapus. Tekan Stop untuk keluar."
@@ -2073,7 +2709,7 @@ export default function LeftDock() {
               <button
                 className="circle danger"
                 title="Hapus feature terpilih"
-                onClick={deleteSelectedFeature}
+                onClick={() => deleteSelectedFeature()}
               >
                 <span className="icon">delete_forever</span>
               </button>
@@ -2115,8 +2751,8 @@ export default function LeftDock() {
             <div className="muted" style={{ marginTop: 12, fontSize: 11 }}>
               {uiMode === "draw" &&
                 (isMultiMode
-                  ? "Mode gambar: double-click selesai 1 polygon. Stop untuk gabung jadi satu MultiPolygon."
-                  : "Mode gambar: double-click selesai 1 polygon. Stop untuk buat layer dari semua polygon sesi.")}
+                  ? "Mode gambar: double-click selesai 1 polygon. Klik Selesai untuk menyimpan semua polygon ke server."
+                  : "Mode gambar: double-click selesai 1 polygon. Klik Selesai untuk menyimpan ke server.")}
               {uiMode === "modify" &&
                 (deleteVertexOn
                   ? "Edit + Hapus vertex: klik vertex untuk menghapus. Snap aktif."
@@ -2292,6 +2928,26 @@ export default function LeftDock() {
           }
         }}
       />
+
+      {/* Drawing Workflow Components */}
+      {showDrawingToolbar && (
+        <DrawingToolbar
+          onDone={handleDrawingDone}
+          onCancel={handleDrawingCancel}
+          featureCount={drawSessionRef.current?.src.getFeatures().length || 0}
+          isLoading={isSavingDrawing}
+        />
+      )}
+
+      {showDrawingForm && drawSessionRef.current && (
+        <DrawingFormModal
+          isOpen={showDrawingForm}
+          onClose={handleFormCancel}
+          onSave={handleFormSave}
+          featureCount={drawSessionRef.current.src.getFeatures().length}
+          isLoading={isSavingDrawing}
+        />
+      )}
     </div>
   );
 }

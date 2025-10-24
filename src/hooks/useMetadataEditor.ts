@@ -351,7 +351,7 @@ export function useMetadataEditor(): UseMetadataEditorReturn {
             allAttributes.push({
               attributeKey: fullAttributeKey,
               attributeValue: attribute.attributeValue,
-              attributeLabel: attribute.attributeLabel || fullAttributeKey,
+              attributeLabel: attribute.attributeLabel || attribute.attributeKey, // Keep the original label without prefix
               attributeValueType: attribute.attributeValueType || 1,
               // No ID and other fields for new attributes
             } as SpatialFeatureAttribute);
@@ -404,7 +404,7 @@ export function useMetadataEditor(): UseMetadataEditorReturn {
                 // Update only the fields that can be modified by the user
                 attributeKey: fullAttributeKey,
                 attributeValue: attribute.attributeValue,
-                attributeLabel: attribute.attributeLabel || fullAttributeKey,
+                attributeLabel: attribute.attributeLabel || attribute.attributeKey, // Keep the original label without prefix
                 attributeValueType: attribute.attributeValueType || 1,
               };
               

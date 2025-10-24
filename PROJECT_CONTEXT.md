@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-This is a **Tax Map React Application** built with TypeScript, Vite, and OpenLayers for displaying and managing spatial tax data. The application provides an interactive map interface for visualizing tax-related geographic features with capabilities for layer management, data export, and comprehensive API integration with the SmartGov backend system.
+This is a **Tax Map React Application** built with TypeScript, Vite, and OpenLayers for displaying and managing spatial tax data. The application provides an interactive map interface for visualizing tax-related geographic features with capabilities for layer management, data export, drawing tools, comprehensive metadata editing, and full API integration with the SmartGov backend system.
 
 ## Technology Stack
 
@@ -10,7 +10,7 @@ This is a **Tax Map React Application** built with TypeScript, Vite, and OpenLay
 - **Build Tool**: Vite 7.1.2
 - **Mapping Library**: OpenLayers 10.6.1
 - **State Management**: Zustand 5.0.8
-- **Geospatial Libraries**: 
+- **Geospatial Libraries**:
   - shp-write, @crmackey/shp-write (for shapefile export)
   - shpjs (for shapefile parsing)
   - jszip (for zip file handling)
@@ -28,6 +28,10 @@ This is a **Tax Map React Application** built with TypeScript, Vite, and OpenLay
 8. **WIB Timezone Support**: Indonesia Western Indonesia Time (UTC+7) timestamp handling
 9. **Hierarchical Feature Grouping**: Organized spatial features by type and region
 10. **Real-time Authentication State Management**: Seamless authentication across components
+11. **Drawing Tools**: Interactive polygon drawing with form-based metadata input
+12. **Advanced Metadata Editing**: Comprehensive attribute management with real-time validation
+13. **Loading State Management**: Global loading screen with progress tracking and error handling
+14. **Export Testing**: Built-in testing utilities for export functionality validation
 
 ## Project Structure
 
@@ -44,15 +48,18 @@ tax-map-react/
 
 ├── src/
 │   ├── components/              # React components
+│   │   ├── ApiLoadPanel.tsx     # API data loading panel
+│   │   ├── DrawingFormModal.tsx # Form for entering drawing metadata
+│   │   ├── DrawingToolbar.tsx   # Toolbar for drawing operations
 │   │   ├── ExportModal.tsx      # Data export interface
 │   │   ├── FocusCard.tsx        # Feature focus display with metadata editing
 │   │   ├── FooterBars.tsx       # Bottom UI bar
 │   │   ├── LayerLoadModal.tsx   # Enhanced layer loading interface
 │   │   ├── LeftDock.tsx         # Left side panel
+│   │   ├── LoadingScreen.tsx    # Global loading screen with progress
 │   │   ├── RightDock.tsx        # Right side panel
 │   │   ├── TaxMap.tsx           # Main map component
 │   │   ├── Topbar.tsx           # Top navigation bar
-│   │   ├── ApiLoadPanel.tsx     # API data loading panel
 │   │   └── api/                 # API-specific components
 │   │       └── SmartGovLoader.tsx # Streamlined API loader
    
@@ -64,6 +71,7 @@ tax-map-react/
    
 │   ├── hooks/                   # Custom React hooks
 │   │   ├── useLayersStore.ts    # Layer management state
+│   │   ├── useLoadingState.ts   # Global loading state management
 │   │   ├── useMapStore.ts       # Map state management
 │   │   └── useMetadataEditor.ts # Metadata editing functionality
    
@@ -77,10 +85,19 @@ tax-map-react/
 │   │   │   └── transformers.ts  # Data transformation utilities
 │   │   ├── geo/                 # Geospatial utilities
 │   │   │   └── simpleWKTConverter.ts # Simplified WKT to OpenLayers conversion
-│   │   └── config.ts            # Configuration constants
+│   │   ├── config.ts            # Configuration constants
+│   │   └── exportTest.ts        # Export functionality testing utilities
    
 │   ├── styles/                  # CSS styles
 │   │   └── ui.css
+   
+│   ├── test/                    # Test files
+│   │   ├── apiLayerLoadTest.js  # API layer loading tests
+│   │   ├── apiLayerLoadSyntaxTest.js # API syntax tests
+│   │   ├── attributeFormatting.test.js # Attribute formatting tests
+│   │   ├── exportRefWilayahFix.test.d.ts # Export fix type definitions
+│   │   ├── exportRefWilayahFix.test.js # Export fix tests
+│   │   └── loadingScreenTest.cjs # Loading screen tests
    
 │   ├── types/                   # TypeScript type definitions
 │   │   └── shp-write.d.ts       # Shapefile writing types
@@ -95,13 +112,24 @@ tax-map-react/
 ├── tmp_zip/                     # Temporary zip extraction folder
 │   └── layers/
 
-├── .env                         # Environment variables
+├── .env.example                 # Environment variables template
+├── .gitignore                   # Git ignore file
+├── eslint.config.js             # ESLint configuration
+├── index.html                   # HTML entry point
+├── package.json                 # NPM package configuration
+├── package-lock.json            # NPM lock file
+├── tsconfig.app.json            # TypeScript app configuration
+├── tsconfig.json                # TypeScript base configuration
+├── tsconfig.node.json           # TypeScript Node configuration
 ├── vite.config.ts               # Vite configuration with environment support
 └── Documentation files:
     ├── PROJECT_CONTEXT.md       # This file
     ├── PROJECT_STRUCTURE.md     # Detailed project structure
     ├── API_DEBUGGING_GUIDE.md   # API debugging guide
     ├── API_IMPLEMENTATION_GUIDE.md # API implementation guide
+    ├── DEBUGGING_GUIDE_FOR_AI_ASSISTANT.md # AI assistant debugging guide
+    ├── ENVIRONMENT_CONFIGURATION_GUIDE.md # Environment configuration guide
+    ├── METADATA_EDITING_IMPLEMENTATION.md # Metadata editing implementation
     ├── SPATIAL_FEATURE_API_IMPLEMENTATION.md # Spatial feature API docs
     ├── LAYER_LOAD_MODAL_ENHANCEMENT.md # Layer loading enhancements
     ├── LAYER_LOAD_MODAL_FIXES.md # Layer loading fixes
@@ -228,6 +256,30 @@ State Update ← Transformer ← JSON Parse ← Raw Response
 - **Enhanced UI**: Improved scrollbar visibility and layer list positioning
 - **Simplified Selection**: Removed individual feature checkboxes to prevent duplicates
 
+### DrawingFormModal (`src/components/DrawingFormModal.tsx`)
+- **Polygon Metadata Entry**: Form for entering layer type and region name for drawn polygons
+- **Multi-Polygon Support**: Handles multiple polygons with individual metadata
+- **Validation System**: Real-time validation with Indonesian error messages
+- **Keyboard Shortcuts**: Ctrl+Enter to save, Escape to cancel
+- **Loading States**: Visual feedback during save operations
+- **Responsive Design**: Optimized for both desktop and mobile interfaces
+
+### DrawingToolbar (`src/components/DrawingToolbar.tsx`)
+- **Drawing Controls**: Toolbar for polygon drawing operations
+- **Feature Counter**: Real-time display of drawn polygon count
+- **Action Buttons**: Complete and cancel drawing operations
+- **Keyboard Shortcuts**: Enter to complete, Escape to cancel
+- **Visual Feedback**: Loading states and disabled states for better UX
+- **Floating Design**: Semi-transparent toolbar with backdrop blur effect
+
+### LoadingScreen (`src/components/LoadingScreen.tsx`)
+- **Global Loading State**: Application-wide loading screen with progress tracking
+- **Error Handling**: Displays error messages with retry functionality
+- **Progress Visualization**: Animated progress bar with percentage display
+- **Branded Design**: SmartGov Revenue branding with consistent styling
+- **Auto-Hide Logic**: Automatically hides when loading is complete
+- **Responsive Layout**: Centered design that works on all screen sizes
+
 ### SmartGovLoader (`src/components/api/SmartGovLoader.tsx`)
 - **Streamlined Interface**: Clean UI for API data discovery
 - **Authentication Management**: Built-in login/logout functionality
@@ -264,6 +316,14 @@ State Update ← Transformer ← JSON Parse ← Raw Response
 - **Layer Creation**: Create styled vector layers with proper naming conventions
 - **Store Integration**: Add layers to Zustand state management
 - **ID Formatting**: Proper ID formatting without trailing suffixes for QGIS compatibility
+
+### Loading State Hook (`src/hooks/useLoadingState.ts`)
+- **Global Loading Management**: Centralized loading state for the entire application
+- **Progress Tracking**: Numeric progress tracking with percentage display
+- **Error Handling**: Global error state with user-friendly messages
+- **Message Customization**: Dynamic loading messages based on operation context
+- **Auto-Reset Logic**: Automatic state cleanup after operations complete
+- **Developer API**: Helper functions for start, update, finish, and error states
 
 ### Metadata Editor Hook (`src/hooks/useMetadataEditor.ts`)
 - **Dual Matching Strategy**: ID-first matching with key-based fallback for attribute updates
@@ -459,6 +519,27 @@ The authentication system provides comprehensive state management:
 
 ## Recent Major Updates
 
+### Drawing Tools Implementation
+- **Interactive Polygon Drawing**: Complete drawing workflow with toolbar and form modal
+- **Metadata Integration**: Form-based metadata entry for drawn polygons with validation
+- **Keyboard Shortcuts**: Comprehensive keyboard support for drawing operations
+- **Visual Feedback**: Real-time drawing feedback with feature counting
+- **Save Integration**: Direct integration with API for saving drawn features
+
+### Global Loading State Management
+- **Centralized Loading System**: Application-wide loading state with progress tracking
+- **Error Recovery**: Global error handling with retry functionality
+- **Progress Visualization**: Animated progress indicators with percentage display
+- **Branded Experience**: Consistent SmartGov branding throughout loading states
+- **Auto-Hide Logic**: Intelligent hiding of loading screen when operations complete
+
+### Environment Configuration System
+- **Environment-Based Configuration**: Complete separation of development and production settings
+- **Laravel Integration Ready**: Prepared for seamless Laravel backend integration
+- **Feature Flags**: Toggleable features for different environments
+- **Security Best Practices**: Proper handling of sensitive configuration values
+- **Documentation**: Comprehensive environment configuration guide
+
 ### WKT Converter Simplification
 - Replaced complex `wktConverter.ts` with simplified `simpleWKTConverter.ts`
 - Removed unnecessary sanitization since API provides well-formatted WKT
@@ -485,6 +566,12 @@ The authentication system provides comprehensive state management:
 - **Error Handling**: Detailed error reporting and recovery mechanisms
 - **Performance Optimization**: Optimistic UI updates with minimal API calls
 
+### Export Testing Framework
+- **Test Utilities**: Comprehensive testing utilities for export functionality
+- **Attribute Flattening Tests**: Validation of API attribute processing for export
+- **Mock Data Support**: Test data for validating export operations
+- **Integration Testing**: Full export process testing with simulated data
+
 ### Code Quality Improvements
 - Removed unused variables and functions across all components
 - Cleaned up imports and exports
@@ -501,7 +588,10 @@ The authentication system provides comprehensive state management:
 **Authentication System**: Enhanced with WIB timezone and state synchronization
 **Spatial Feature API**: Complete implementation with pagination and attribute handling
 **Metadata Editing System**: Advanced attribute management with real-time validation and updates
-**Environment Configuration**: Support for development and production environments
+**Drawing Tools**: Interactive polygon drawing with form-based metadata entry
+**Loading State Management**: Global loading screen with progress tracking and error handling
+**Environment Configuration**: Support for development and production environments with Laravel integration ready
+**Export Testing**: Comprehensive testing framework for export functionality validation
 **Code Quality**: Optimized with unused variable cleanup and performance improvements
 **API Integration**: Robust PATCH request handling with proper ID extraction and attribute preservation
 **User Experience**: Comprehensive error handling, optimistic updates, and intelligent UI interactions

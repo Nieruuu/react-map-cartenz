@@ -1,5 +1,6 @@
-import { get, patch } from './client';
+import { get, patch, del, post } from './client';
 import { toQuery } from './qs';
+import WKT from 'ol/format/WKT';
 
 export type SpatialFeatureAttribute = {
   id: number;
@@ -362,4 +363,97 @@ export async function deleteSpatialFeatureAttribute(
   });
 
   return updateSpatialFeature(featureId, updatedAttributes);
+}
+
+/**
+ * Delete a spatial feature by setting its status to inactive (2)
+ * Endpoint: https://retfw.smartgov.id/framework/spatial-feature/{featureId}
+ * Uses DELETE method to mark the feature as inactive
+ */
+export async function deleteSpatialFeature(featureId: number): Promise<void> {
+  // Use the DELETE method to mark the feature as inactive
+  // The API will automatically set the status to 2
+  await del<void>(`/spatial-feature/${featureId}`);
+}
+
+/**
+ * Get spatial features by attribute value
+ * This function searches for features with a specific attribute key and value
+ */
+export async function getSpatialFeaturesByAttribute(
+  attributeKey: string,
+  attributeValue: string,
+  params: Omit<ListSpatialFeaturesParams, 'filters'> = {}
+): Promise<SpatialFeatureListResponse> {
+  return listSpatialFeatures({
+    ...params,
+    filters: [`${attributeKey}|eq|${attributeValue}`],
+  });
+}
+
+/**
+ * Get "Batas Kecamatan Kabupaten Badung" layer specifically
+ * This function fetches features with spatialFeature.type = "Batas Kecamatan Kabupaten Badung"
+ */
+export async function getBatasKecamatanKabupatenBadung(
+  params: Omit<ListSpatialFeaturesParams, 'filters'> = {}
+): Promise<SpatialFeatureListResponse> {
+  return getSpatialFeaturesByAttribute(
+    'spatialFeature.type',
+    'Batas Kecamatan Kabupaten Badung',
+    params
+  );
+}
+
+/**
+ * Create a new spatial feature
+ * Endpoint: https://retfw.smartgov.id/framework/spatial-feature?include[]=attribute
+ * Uses POST method to create a new feature with attributes
+ */
+export async function createSpatialFeature(
+  payload: {
+    identifier: string;
+    label: string;
+    value: string;
+    status: number;
+    attribute: Array<{
+      attributeKey: string;
+      attributeLabel: string;
+      attributeValueType: number;
+      attributeValue: string;
+      status: number;
+    }>;
+  }
+): Promise<SpatialFeature> {
+  const q = toQuery({
+    include: ['attribute'],
+  });
+
+  return post<SpatialFeature>(`/spatial-feature${q}`, payload);
+}
+
+/**
+ * Generate a UUID for new spatial features
+ */
+export function generateUUID(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
+/**
+ * Convert OpenLayers geometry to WKT format
+ */
+export function geometryToWKT(geometry: any): string | null {
+  try {
+    const wktFormat = new WKT();
+    // Transform from EPSG:3857 to EPSG:4326 before converting to WKT
+    const geometry4326 = geometry.clone().transform('EPSG:3857', 'EPSG:4326');
+    return wktFormat.writeGeometry(geometry4326);
+  } catch (error) {
+    console.error('Failed to convert geometry to WKT:', error);
+    return null;
+  }
 }
