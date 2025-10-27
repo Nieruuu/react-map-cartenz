@@ -11,7 +11,12 @@ interface DrawingFormModalProps {
   onSave: (formData: FormData[]) => void;
   featureCount: number;
   isLoading: boolean;
-  isMultiFeature: boolean;
+  // New props for simplified mode
+  targetLayer?: {
+    id: string;
+    name: string;
+    typeCode: string;
+  } | null;
 }
 
 const DrawingFormModal: React.FC<DrawingFormModalProps> = ({
@@ -20,28 +25,40 @@ const DrawingFormModal: React.FC<DrawingFormModalProps> = ({
   onSave,
   featureCount,
   isLoading,
-  isMultiFeature,
+  targetLayer,
 }) => {
-  const effectiveFeatureCount = isMultiFeature ? 1 : featureCount;
-
   const [formData, setFormData] = useState<FormData[]>(
-    Array.from({ length: effectiveFeatureCount }, () => ({
+    Array.from({ length: featureCount }, () => ({
       layerType: "",
       regionName: "",
     }))
   );
   const [errors, setErrors] = useState<Record<string, string>>({});
 
+  // Determine if we're in simplified mode (adding to existing layer)
+  const isSimplifiedMode = !!targetLayer;
+
   // Initialize form data when feature count changes
   useEffect(() => {
-    setFormData((prev) =>
-      Array.from({ length: effectiveFeatureCount }, (_, index) => ({
-        layerType: prev[index]?.layerType || "",
-        regionName: prev[index]?.regionName || "",
+    setFormData(
+      Array.from({ length: featureCount }, (_, index) => ({
+        layerType: formData[index]?.layerType || "",
+        regionName: formData[index]?.regionName || "",
       }))
     );
-    setErrors({});
-  }, [effectiveFeatureCount]);
+  }, [featureCount]);
+
+  // Pre-fill layer type in simplified mode
+  useEffect(() => {
+    if (isSimplifiedMode && targetLayer) {
+      setFormData(
+        Array.from({ length: featureCount }, (_, index) => ({
+          layerType: targetLayer.typeCode || "",
+          regionName: formData[index]?.regionName || "",
+        }))
+      );
+    }
+  }, [isSimplifiedMode, targetLayer, featureCount]);
 
   // Add keyboard shortcuts
   useEffect(() => {
@@ -83,7 +100,8 @@ const DrawingFormModal: React.FC<DrawingFormModalProps> = ({
     const newErrors: Record<string, string> = {};
 
     formData.forEach((data, index) => {
-      if (!data.layerType.trim()) {
+      // In simplified mode, layer type is pre-filled and validated
+      if (!isSimplifiedMode && !data.layerType.trim()) {
         newErrors[`${index}-layerType`] = "Nama Layer harus diisi";
       }
       if (!data.regionName.trim()) {
@@ -165,7 +183,7 @@ const DrawingFormModal: React.FC<DrawingFormModalProps> = ({
             <span className="icon" style={{ color: "#0ea5e9" }}>
               edit_note
             </span>
-            {isMultiFeature ? "Informasi MultiPolygon" : "Informasi Polygon"}
+            {isSimplifiedMode ? "Tambah ke Layer" : "Informasi Polygon"}
           </h2>
           <button
             onClick={handleClose}
@@ -210,10 +228,10 @@ const DrawingFormModal: React.FC<DrawingFormModalProps> = ({
               lineHeight: "1.5",
             }}
           >
-            {isMultiFeature
+            {isSimplifiedMode
               ? featureCount === 1
-                ? "Mode MultiPolygon aktif. Polygon yang digambar akan disimpan sebagai satu feature."
-                : `Mode MultiPolygon aktif. ${featureCount} polygon akan digabung menjadi satu feature.`
+                ? "Tambahkan polygon ke layer yang dipilih. Hanya perlu mengisi nama wilayah:"
+                : `Tambahkan ${featureCount} polygon ke layer yang dipilih. Hanya perlu mengisi nama wilayah:`
               : featureCount === 1
               ? "Lengkapi informasi untuk polygon yang telah digambar:"
               : `Lengkapi informasi untuk ${featureCount} polygon yang telah digambar:`}
@@ -240,79 +258,102 @@ const DrawingFormModal: React.FC<DrawingFormModalProps> = ({
                   color: "#374151",
                 }}
               >
-                {isMultiFeature ? "MultiPolygon" : `Polygon ${index + 1}`}
+                Polygon {index + 1}
               </h3>
-              {isMultiFeature && featureCount > 1 && (
-                <div
-                  style={{
-                    fontSize: "12px",
-                    color: "#6b7280",
-                    marginBottom: "12px",
-                  }}
-                >
-                  {featureCount} polygon akan digabung menjadi satu feature.
+
+              {/* Layer Type Field - Only show in normal mode */}
+              {!isSimplifiedMode && (
+                <div style={{ marginBottom: "12px" }}>
+                  <label
+                    style={{
+                      display: "block",
+                      fontSize: "14px",
+                      fontWeight: "500",
+                      color: "#374151",
+                      marginBottom: "6px",
+                    }}
+                  >
+                    Nama Layer/Tipe Layer{" "}
+                    <span style={{ color: "#ef4444" }}>*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={data.layerType}
+                    onChange={(e) =>
+                      handleInputChange(index, "layerType", e.target.value)
+                    }
+                    disabled={isLoading}
+                    placeholder="contoh: Kecamatan, Kelurahan, dll."
+                    style={{
+                      width: "100%",
+                      padding: "8px 12px",
+                      border: errors[`${index}-layerType`]
+                        ? "1px solid #ef4444"
+                        : "1px solid #d1d5db",
+                      borderRadius: "6px",
+                      fontSize: "14px",
+                      backgroundColor: isLoading ? "#f9fafb" : "white",
+                      cursor: isLoading ? "not-allowed" : "text",
+                      outline: "none",
+                      transition: "border-color 0.2s ease",
+                    }}
+                    onFocus={(e) => {
+                      if (!isLoading) {
+                        e.target.style.borderColor = "#0ea5e9";
+                      }
+                    }}
+                    onBlur={(e) => {
+                      if (!isLoading) {
+                        e.target.style.borderColor = errors[
+                          `${index}-layerType`
+                        ]
+                          ? "#ef4444"
+                          : "#d1d5db";
+                      }
+                    }}
+                  />
+                  {errors[`${index}-layerType`] && (
+                    <div
+                      style={{
+                        fontSize: "12px",
+                        color: "#ef4444",
+                        marginTop: "4px",
+                      }}
+                    >
+                      {errors[`${index}-layerType`]}
+                    </div>
+                  )}
                 </div>
               )}
 
-              <div style={{ marginBottom: "12px" }}>
-                <label
-                  style={{
-                    display: "block",
-                    fontSize: "14px",
-                    fontWeight: "500",
-                    color: "#374151",
-                    marginBottom: "6px",
-                  }}
-                >
-                  Nama Layer/Tipe Layer{" "}
-                  <span style={{ color: "#ef4444" }}>*</span>
-                </label>
-                <input
-                  type="text"
-                  value={data.layerType}
-                  onChange={(e) =>
-                    handleInputChange(index, "layerType", e.target.value)
-                  }
-                  disabled={isLoading}
-                  placeholder="contoh: Kecamatan, Kelurahan, dll."
-                  style={{
-                    width: "100%",
-                    padding: "8px 12px",
-                    border: errors[`${index}-layerType`]
-                      ? "1px solid #ef4444"
-                      : "1px solid #d1d5db",
-                    borderRadius: "6px",
-                    fontSize: "14px",
-                    backgroundColor: isLoading ? "#f9fafb" : "white",
-                    cursor: isLoading ? "not-allowed" : "text",
-                    outline: "none",
-                    transition: "border-color 0.2s ease",
-                  }}
-                  onFocus={(e) => {
-                    if (!isLoading) {
-                      e.target.style.borderColor = "#0ea5e9";
-                    }
-                  }}
-                  onBlur={(e) => {
-                    if (!isLoading) {
-                      e.target.style.borderColor = errors[`${index}-layerType`]
-                        ? "#ef4444"
-                        : "#d1d5db";
-                    }
-                  }}
-                />
-                {errors[`${index}-layerType`] && (
-                  <div
+              {/* Show selected layer info in simplified mode */}
+              {isSimplifiedMode && targetLayer && (
+                <div style={{ marginBottom: "12px" }}>
+                  <label
                     style={{
-                      fontSize: "12px",
-                      color: "#ef4444",
-                      marginTop: "4px",
+                      display: "block",
+                      fontSize: "14px",
+                      fontWeight: "500",
+                      color: "#374151",
+                      marginBottom: "6px",
                     }}
                   >
-                    {errors[`${index}-layerType`]}
+                    Layer Tujuan
+                  </label>
+                  <div
+                    style={{
+                      padding: "8px 12px",
+                      border: "1px solid #d1d5db",
+                      borderRadius: "6px",
+                      fontSize: "14px",
+                      backgroundColor: "#f3f4f6",
+                      color: "#6b7280",
+                    }}
+                  >
+                    {targetLayer.name}
                   </div>
-                )}
-              </div>
+                </div>
+              )}
 
               <div>
                 <label

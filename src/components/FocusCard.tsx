@@ -991,14 +991,7 @@ export default function FocusCard() {
               strokeLinejoin="round"
               strokeLinecap="round"
             />
-            <circle
-              cx={cx}
-              cy={cy}
-              r="3"
-              fill="#ef4444"
-              stroke="#fff"
-              strokeWidth="1"
-            />
+            {/* Red dot removed from center of geometry preview */}
           </svg>
           <div className="preview-info">
             <div className="preview-type">{g.type}</div>
