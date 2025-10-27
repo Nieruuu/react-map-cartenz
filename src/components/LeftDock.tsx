@@ -1,6 +1,5 @@
-// src/components/LeftDock.tsx
-import { useRef, useState, useEffect, useCallback } from "react";
-import { createPortal } from "react-dom";
+﻿// src/components/LeftDock.tsx
+import { useCallback, useEffect, useRef, useState } from "react";
 import VectorLayer from "ol/layer/Vector";
 import VectorSource from "ol/source/Vector";
 import Draw from "ol/interaction/Draw";
@@ -30,12 +29,16 @@ import {
   deleteSpatialFeature,
   createSpatialFeature,
   generateUUID,
+  getSpatialFeatureById,
   geometryToWKT,
+  updateSpatialFeature,
   type SpatialFeature,
+  type SpatialFeatureAttribute,
 } from "../lib/api/spatialFeature";
 import { runAllExportTests } from "../lib/exportTest";
 import DrawingToolbar from "./DrawingToolbar";
 import DrawingFormModal from "./DrawingFormModal";
+import VertexEditingToolbar from "./VertexEditingToolbar";
 import type {
   Feature as GeoJSONFeature,
   FeatureCollection as GeoJSONFeatureCollection,
@@ -88,7 +91,6 @@ type RegistryItem = {
 };
 
 const REGKEY = "__taxmap_dataset_registry__";
-const DEFAULT_DRAW_KIND: Kind = "custom";
 
 function ensureRegistry(): Map<string, RegistryItem> {
   const g: any = window as any;
@@ -96,6 +98,197 @@ function ensureRegistry(): Map<string, RegistryItem> {
     g[REGKEY] = new Map<string, RegistryItem>();
   }
   return g[REGKEY] as Map<string, RegistryItem>;
+}
+
+function deriveFeatureName(feature: OLFeature<any>): string {
+  const candidates = [
+    feature.get("name"),
+    feature.get("label"),
+    feature.get("spatialFeature.refWilayah"),
+    feature.get("spatialFeature.type"),
+    feature.get("identifier"),
+  ];
+  for (const candidate of candidates) {
+    if (candidate == null) continue;
+    const text = String(candidate).trim();
+    if (text) return text;
+  }
+  const fallback = feature.get("id") ?? feature.getId();
+  return fallback != null ? `Feature ${fallback}` : "Feature";
+}
+
+function getAnchorCoordinate(geometry: Geometry | null): [number, number] | null {
+  if (!geometry) return null;
+  try {
+    if (geometry instanceof Point) {
+      return geometry.getCoordinates() as [number, number];
+    }
+    if (geometry instanceof MultiPoint) {
+      const points = geometry.getPoints();
+      if (points.length) {
+        return points[0].getCoordinates() as [number, number];
+      }
+    }
+    if (geometry instanceof Polygon) {
+      return geometry.getInteriorPoint().getCoordinates() as [number, number];
+    }
+    if (geometry instanceof MultiPolygon) {
+      const interiorPoints = geometry.getInteriorPoints();
+      const point = interiorPoints.getPoint(0);
+      if (point) {
+        return point.getCoordinates() as [number, number];
+      }
+    }
+    const extent = geometry.getExtent?.();
+    if (extent && extent.length >= 4) {
+      const [minX, minY, maxX, maxY] = extent;
+      return [(minX + maxX) / 2, (minY + maxY) / 2];
+    }
+  } catch (error) {
+    console.warn("Failed to derive anchor coordinate:", error);
+  }
+  return null;
+}
+
+type ConfirmModalProps = {
+  open: boolean;
+  title: string;
+  message: string;
+  busy?: boolean;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+};
+
+function ConfirmModal({
+  open,
+  title,
+  message,
+  busy = false,
+  confirmLabel = "Ya",
+  cancelLabel = "Tidak",
+  onConfirm,
+  onCancel,
+}: ConfirmModalProps) {
+  const confirmButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    confirmButtonRef.current?.focus();
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCancel();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [open, onCancel]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      role="presentation"
+      aria-hidden="false"
+      style={{
+        position: "fixed",
+        inset: 0,
+        backgroundColor: "rgba(15, 23, 42, 0.45)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 2800,
+        padding: "20px",
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="vertex-edit-confirm-title"
+        aria-describedby="vertex-edit-confirm-desc"
+        style={{
+          width: "min(440px, 92vw)",
+          backgroundColor: "#ffffff",
+          borderRadius: "16px",
+          boxShadow: "0 24px 55px rgba(15, 23, 42, 0.3)",
+          padding: "24px 26px",
+          display: "flex",
+          flexDirection: "column",
+          gap: "16px",
+        }}
+      >
+        <h2
+          id="vertex-edit-confirm-title"
+          style={{ fontSize: "18px", fontWeight: 600, color: "#0f172a" }}
+        >
+          {title}
+        </h2>
+        <p
+          id="vertex-edit-confirm-desc"
+          style={{ fontSize: "14px", color: "#475569", lineHeight: 1.5 }}
+        >
+          {message}
+        </p>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: "12px",
+            marginTop: "8px",
+          }}
+        >
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            style={{
+              borderRadius: "10px",
+              border: "1px solid #cbd5f5",
+              padding: "8px 16px",
+              backgroundColor: "#ffffff",
+              color: "#475569",
+              fontWeight: 500,
+              cursor: busy ? "not-allowed" : "pointer",
+              opacity: busy ? 0.6 : 1,
+            }}
+          >
+            {cancelLabel}
+          </button>
+          <button
+            ref={confirmButtonRef}
+            type="button"
+            onClick={onConfirm}
+            disabled={busy}
+            style={{
+              borderRadius: "10px",
+              border: "none",
+              padding: "8px 18px",
+              backgroundColor: busy ? "#9ca3af" : "#10b981",
+              color: "#ffffff",
+              fontWeight: 600,
+              cursor: busy ? "not-allowed" : "pointer",
+              boxShadow: "0 10px 20px rgba(16, 185, 129, 0.25)",
+              opacity: busy ? 0.8 : 1,
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+            }}
+          >
+            <span className="icon" aria-hidden="true">
+              {busy ? "hourglass_empty" : "check"}
+            </span>
+            {busy ? "Memproses..." : confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 type PolygonRings = [number, number][][];
@@ -542,6 +735,104 @@ export default function LeftDock() {
   const deleteVertexModeRef = useRef(false);
   const [deleteVertexOn, setDeleteVertexOn] = useState(false);
 
+  const vertexSessionRef = useRef<{
+    featureId?: number;
+    originalGeometry?: Geometry | null;
+    originalWkt?: string | null;
+    lastKnownWkt?: string | null;
+    attributes?: SpatialFeatureAttribute[];
+    featureName?: string;
+  } | null>(null);
+  const toolbarUpdateRafRef = useRef<number | null>(null);
+  const [vertexToolbarState, setVertexToolbarState] = useState<{
+    position: { x: number; y: number };
+    featureName: string;
+  } | null>(null);
+  const [vertexEditDirty, setVertexEditDirty] = useState(false);
+  const [isSavingVertexEdit, setIsSavingVertexEdit] = useState(false);
+  const [vertexConfirm, setVertexConfirm] = useState<{
+    action: "finish" | "save";
+  } | null>(null);
+
+  const updateVertexToolbarPosition = useCallback(() => {
+    if (typeof window === "undefined") return;
+    if (!map || uiMode !== "modify") return;
+    const feature = targetFeatureRef.current;
+    if (!feature) return;
+    const geometry = feature.getGeometry();
+    const anchor = getAnchorCoordinate(geometry);
+    if (!anchor) return;
+    const pixel = map.getPixelFromCoordinate(anchor);
+    if (!pixel) return;
+    const targetEl = map.getTargetElement();
+    if (!targetEl) return;
+    const rect = targetEl.getBoundingClientRect();
+    const rawX = rect.left + pixel[0] + 18;
+    const rawY = rect.top + pixel[1] - 90;
+    const clampedX = Math.min(
+      Math.max(16, rawX),
+      window.innerWidth - 320
+    );
+    const clampedY = Math.min(
+      Math.max(16, rawY),
+      window.innerHeight - 160
+    );
+    const featureName =
+      vertexSessionRef.current?.featureName || deriveFeatureName(feature);
+    if (vertexSessionRef.current) {
+      vertexSessionRef.current.featureName = featureName;
+    }
+    setVertexToolbarState((prev) => {
+      if (
+        prev &&
+        Math.abs(prev.position.x - clampedX) < 1 &&
+        Math.abs(prev.position.y - clampedY) < 1 &&
+        prev.featureName === featureName
+      ) {
+        return prev;
+      }
+      return {
+        position: { x: clampedX, y: clampedY },
+        featureName,
+      };
+    });
+  }, [map, uiMode]);
+
+  const scheduleToolbarUpdate = useCallback(() => {
+    if (toolbarUpdateRafRef.current !== null) {
+      cancelAnimationFrame(toolbarUpdateRafRef.current);
+    }
+    toolbarUpdateRafRef.current = window.requestAnimationFrame(() => {
+      toolbarUpdateRafRef.current = null;
+      updateVertexToolbarPosition();
+    });
+  }, [updateVertexToolbarPosition]);
+
+  useEffect(
+    () => () => {
+      if (toolbarUpdateRafRef.current !== null) {
+        cancelAnimationFrame(toolbarUpdateRafRef.current);
+        toolbarUpdateRafRef.current = null;
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (!map || uiMode !== "modify") return;
+    const handler = () => scheduleToolbarUpdate();
+    const keys = [
+      map.on("moveend", handler),
+      map.on("pointerdrag", handler),
+    ];
+    window.addEventListener("resize", handler);
+    handler();
+    return () => {
+      keys.forEach((key) => unByKey(key));
+      window.removeEventListener("resize", handler);
+    };
+  }, [map, uiMode, scheduleToolbarUpdate]);
+
   const setBusy = (busy: boolean) =>
     window.dispatchEvent(
       new CustomEvent("interaction-busy", { detail: { busy } })
@@ -551,10 +842,9 @@ export default function LeftDock() {
   const [uiMode, setUIMode] = useState<
     "idle" | "draw" | "modify" | "translate" | "translateLayer"
   >("idle");
+  const [drawingLayerType, setDrawingLayerType] = useState<Kind>("custom");
+  const [newLayerName, setNewLayerName] = useState("");
   const [isMultiMode, setIsMultiMode] = useState(false);
-  const [pendingMultiMode, setPendingMultiMode] = useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [isDeleteInProgress, setIsDeleteInProgress] = useState(false);
 
   // Drawing workflow state
   const [showDrawingToolbar, setShowDrawingToolbar] = useState(false);
@@ -589,10 +879,6 @@ export default function LeftDock() {
   };
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const deleteButtonRef = useRef<HTMLButtonElement | null>(null);
-  const deleteDialogRef = useRef<HTMLDivElement | null>(null);
-  const deleteConfirmButtonRef = useRef<HTMLButtonElement | null>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
 
   /* ---------- Import ---------- */
   function inferKindFromFeatureCollection(fc: any): Kind {
@@ -773,14 +1059,11 @@ export default function LeftDock() {
     });
   }
 
-  const createNewPolygonLayer = (
-    name?: string,
-    kind: Kind = DEFAULT_DRAW_KIND
-  ) => {
+  const createNewPolygonLayer = (name?: string) => {
     if (!map) return null;
     const layerName = name || `Polygon ${Date.now()}`;
     const src = new VectorSource();
-    const cfg = styleCfgForKind(kind);
+    const cfg = styleCfgForKind(drawingLayerType);
     const baseCfg = {
       borderColor: cfg.borderColor,
       borderOpacity: 1,
@@ -802,13 +1085,13 @@ export default function LeftDock() {
       updateWhileInteracting: true,
       updateWhileAnimating: true,
     });
-    (lyr as any).set("appKind", kind);
+    (lyr as any).set("appKind", drawingLayerType);
     const layerId = `polygon-${Date.now()}`;
     map.addLayer(lyr);
     addLayer({
       id: layerId,
       name: layerName,
-      kind,
+      kind: drawingLayerType,
       visible: true,
       layer: lyr,
       styleCfg: baseCfg,
@@ -892,9 +1175,9 @@ export default function LeftDock() {
     setBusy(true);
     setFocus?.(null);
 
-    const currType = opts?.type ?? DEFAULT_DRAW_KIND;
+    const currType = opts?.type ?? drawingLayerType;
     const plannedName =
-      (opts?.name ?? "").trim() ||
+      (opts?.name ?? newLayerName.trim()) ||
       `${currType.charAt(0).toUpperCase() + currType.slice(1)} Baru`;
 
     const sessionSrc = new VectorSource();
@@ -1123,14 +1406,17 @@ export default function LeftDock() {
     pointerMoveKeyRef.current = map.on("pointermove", handler);
   }
 
-  const startEdit = () => {
+  const startEdit = async () => {
     if (!map || !layers.length) return;
 
     const prevTarget = targetFeatureRef.current;
     const prevSelectedId = selectedId;
-    stopAll();
+    stopAll({ preserveFocus: true });
     setBusy(true);
     setFocus?.(null);
+    vertexSessionRef.current = null;
+    setVertexToolbarState(null);
+    setVertexEditDirty(false);
 
     let targetFeature: OLFeature<Geometry> | null = prevTarget || null;
     if (!targetFeature && prevSelectedId) {
@@ -1153,7 +1439,54 @@ export default function LeftDock() {
       flash("Pilih layer/feature terlebih dahulu", "err");
       return;
     }
+
+    const geometry = targetFeature.getGeometry();
+    if (!geometry) {
+      setBusy(false);
+      flash("Feature tidak memiliki geometri untuk diedit", "err");
+      return;
+    }
+
     targetFeatureRef.current = targetFeature;
+
+    const rawId = targetFeature.get("id") ?? targetFeature.getId();
+    const parsedId = Number(rawId);
+    const featureId = Number.isFinite(parsedId) ? parsedId : undefined;
+
+    let rawAttributes =
+      (targetFeature.get("_rawAttributes") as SpatialFeatureAttribute[] | null) ||
+      null;
+
+    if ((!rawAttributes || !rawAttributes.length) && featureId !== undefined) {
+      try {
+        const detail = await getSpatialFeatureById(featureId);
+        rawAttributes = detail.attribute;
+        targetFeature.set("_rawAttributes", detail.attribute);
+      } catch (error) {
+        console.warn("Gagal memuat atribut feature:", error);
+      }
+    }
+
+    if (!rawAttributes || !rawAttributes.length) {
+      setBusy(false);
+      flash(
+        "Atribut feature tidak tersedia. Tidak bisa masuk mode edit.",
+        "err"
+      );
+      return;
+    }
+
+    const originalGeometryClone = geometry.clone();
+    const originalWkt = geometryToWKT(geometry);
+
+    vertexSessionRef.current = {
+      featureId,
+      originalGeometry: originalGeometryClone,
+      originalWkt,
+      lastKnownWkt: originalWkt,
+      attributes: rawAttributes.map((attr) => ({ ...attr })),
+      featureName: deriveFeatureName(targetFeature),
+    };
 
     deleteVertexModeRef.current = false;
     setDeleteVertexOn(false);
@@ -1186,6 +1519,7 @@ export default function LeftDock() {
     });
 
     modify.on("modifystart", () => {
+      isDraggingRef.current = true;
       const tf = targetFeatureRef.current;
       if (!tf) return;
       const g = tf.getGeometry();
@@ -1196,6 +1530,12 @@ export default function LeftDock() {
         unByKey(pointerMoveKeyRef.current);
         pointerMoveKeyRef.current = null;
       }
+      if (map) {
+        const el = map.getTargetElement();
+        if (el) {
+          el.style.cursor = "grabbing";
+        }
+      }
       if (geomChangeKeyRef.current) {
         unByKey(geomChangeKeyRef.current);
         geomChangeKeyRef.current = null;
@@ -1205,6 +1545,7 @@ export default function LeftDock() {
         vertexRafRef.current = requestAnimationFrame(() => {
           const tf2 = targetFeatureRef.current;
           if (tf2) buildVertexLayerForTargets([tf2]);
+          scheduleToolbarUpdate();
         });
       });
     });
@@ -1221,7 +1562,30 @@ export default function LeftDock() {
       if (hoverSrcRef.current) hoverSrcRef.current.clear();
       attachPointerMoveHover();
       const tf = targetFeatureRef.current;
-      if (tf) buildVertexLayerForTargets([tf]);
+      if (tf) {
+        buildVertexLayerForTargets([tf]);
+        const session = vertexSessionRef.current;
+        if (session) {
+          const latestGeom = tf.getGeometry();
+          const latestWkt = latestGeom ? geometryToWKT(latestGeom) : null;
+          session.lastKnownWkt = latestWkt;
+          if (session.originalWkt && latestWkt) {
+            setVertexEditDirty(latestWkt !== session.originalWkt);
+          } else if (latestWkt && !session.originalWkt) {
+            setVertexEditDirty(true);
+          } else {
+            setVertexEditDirty(false);
+          }
+        }
+      }
+      isDraggingRef.current = false;
+      if (map) {
+        const el = map.getTargetElement();
+        if (el) {
+          el.style.cursor = "grab";
+        }
+      }
+      scheduleToolbarUpdate();
     });
 
     map.addInteraction(modify);
@@ -1252,7 +1616,219 @@ export default function LeftDock() {
     }
 
     attachPointerMoveHover();
+    scheduleToolbarUpdate();
+    if (map) {
+      const el = map.getTargetElement();
+      if (el) {
+        el.style.cursor = "grab";
+        el.style.backgroundColor = "rgba(16, 185, 129, 0.06)";
+      }
+    }
+    if (featureId !== undefined) {
+      setSelectedId?.(String(featureId));
+    }
     setUIMode("modify");
+    setBusy(false);
+    flash("Mode edit vertex aktif. Toolbar muncul di dekat fitur.", "ok", 2600);
+  };
+
+  const finalizeVertexEditing = () => {
+    if (uiMode !== "modify") {
+      flash("Mode edit belum aktif.", "err");
+      setVertexConfirm(null);
+      return;
+    }
+    const session = vertexSessionRef.current;
+    const feature = targetFeatureRef.current;
+    const savedName =
+      session?.featureName ||
+      (feature ? deriveFeatureName(feature) : undefined);
+    const savedId = session?.featureId;
+    setVertexConfirm(null);
+    stopAll({ silent: true });
+    setBusy(false);
+    if (savedId !== undefined) {
+      setSelectedId?.(String(savedId));
+    }
+    flash(
+      savedName
+        ? `Mode edit selesai untuk ${savedName}.`
+        : "Mode edit selesai.",
+      "ok",
+      2200
+    );
+  };
+
+  const saveVertexEditing = async () => {
+    if (isSavingVertexEdit) return;
+    if (uiMode !== "modify") {
+      flash("Aktifkan mode Edit terlebih dahulu.", "err");
+      setVertexConfirm(null);
+      return;
+    }
+    const session = vertexSessionRef.current;
+    const feature = targetFeatureRef.current;
+    if (!session || !feature) {
+      flash("Sesi edit tidak ditemukan.", "err");
+      setVertexConfirm(null);
+      return;
+    }
+    if (session.featureId === undefined) {
+      flash(
+        "Feature ini tidak memiliki ID API sehingga tidak dapat disimpan.",
+        "err"
+      );
+      setVertexConfirm(null);
+      return;
+    }
+    const geometry = feature.getGeometry();
+    if (!geometry) {
+      flash("Geometri tidak tersedia untuk disimpan.", "err");
+      setVertexConfirm(null);
+      return;
+    }
+    const wkt = geometryToWKT(geometry);
+    if (!wkt) {
+      flash("Gagal mengonversi geometri ke format WKT.", "err");
+      setVertexConfirm(null);
+      return;
+    }
+    if (session.originalWkt && session.originalWkt === wkt) {
+      flash("Tidak ada perubahan geometri untuk disimpan.", "err");
+      setVertexConfirm(null);
+      return;
+    }
+
+    let attributes = session.attributes;
+    if (!attributes || !attributes.length) {
+      try {
+        const detail = await getSpatialFeatureById(session.featureId);
+        attributes = detail.attribute.map((attr) => ({ ...attr }));
+        session.attributes = attributes;
+        feature.set("_rawAttributes", detail.attribute);
+      } catch (error) {
+        console.error("Gagal memuat atribut terbaru:", error);
+        flash("Tidak bisa memuat atribut terbaru dari server.", "err");
+        setVertexConfirm(null);
+        return;
+      }
+    }
+
+    if (!attributes || !attributes.length) {
+      flash("Atribut feature tidak lengkap untuk menyimpan.", "err");
+      setVertexConfirm(null);
+      return;
+    }
+
+    let geometryAttrFound = false;
+    const patchedAttributes = attributes.map((attr) => {
+      if (attr.attributeKey === "spatialFeature.geometry") {
+        geometryAttrFound = true;
+        return { ...attr, attributeValue: wkt };
+      }
+      return { ...attr };
+    });
+
+    if (!geometryAttrFound) {
+      flash("Attribute spatialFeature.geometry tidak ditemukan.", "err");
+      setVertexConfirm(null);
+      return;
+    }
+
+    setIsSavingVertexEdit(true);
+    setBusy(true);
+    try {
+      const updated = await updateSpatialFeature(
+        session.featureId,
+        patchedAttributes
+      );
+      const updatedAttributes =
+        updated.attribute?.map((attr) => ({ ...attr })) ?? patchedAttributes;
+      session.originalWkt = wkt;
+      session.lastKnownWkt = wkt;
+      session.attributes = updatedAttributes;
+      feature.set("_rawAttributes", updatedAttributes);
+      feature.set("spatialFeature.geometry", wkt);
+      feature.changed();
+      setVertexEditDirty(false);
+
+      const savedFeatureId = session.featureId;
+      const savedName =
+        session.featureName || deriveFeatureName(feature);
+
+      stopAll({ silent: true });
+      if (savedFeatureId !== undefined) {
+        setSelectedId?.(String(savedFeatureId));
+      }
+      flash(
+        savedName
+          ? `Perubahan geometri untuk ${savedName} berhasil disimpan.`
+          : "Perubahan geometri berhasil disimpan.",
+        "ok",
+        2600
+      );
+    } catch (error: any) {
+      console.error("Gagal menyimpan perubahan geometri:", error);
+      const message =
+        error?.message != null ? String(error.message) : String(error);
+      if (message.includes("401") || message.includes("unauthorized")) {
+        flash("Gagal menyimpan: sesi login telah berakhir.", "err");
+      } else if (message.includes("403") || message.includes("forbidden")) {
+        flash("Gagal menyimpan: Anda tidak memiliki izin.", "err");
+      } else if (message.includes("404") || message.includes("not found")) {
+        flash("Gagal menyimpan: feature tidak ditemukan di server.", "err");
+      } else if (
+        message.includes("network") ||
+        message.includes("fetch")
+      ) {
+        flash(
+          "Gagal menyimpan: masalah koneksi internet. Silakan coba lagi.",
+          "err"
+        );
+      } else {
+        flash(`Gagal menyimpan perubahan: ${message}`, "err");
+      }
+    } finally {
+      setIsSavingVertexEdit(false);
+      setBusy(false);
+      setVertexConfirm(null);
+    }
+  };
+
+  const requestFinishEditing = () => {
+    if (isSavingVertexEdit) return;
+    if (uiMode !== "modify") {
+      flash("Aktifkan mode Edit terlebih dahulu.", "err");
+      return;
+    }
+    setVertexConfirm({ action: "finish" });
+  };
+
+  const requestSaveEditing = () => {
+    if (isSavingVertexEdit) return;
+    if (uiMode !== "modify") {
+      flash("Aktifkan mode Edit terlebih dahulu.", "err");
+      return;
+    }
+    if (!vertexEditDirty) {
+      flash("Tidak ada perubahan geometri untuk disimpan.", "err");
+      return;
+    }
+    setVertexConfirm({ action: "save" });
+  };
+
+  const handleConfirmYes = () => {
+    if (!vertexConfirm) return;
+    if (vertexConfirm.action === "save") {
+      void saveVertexEditing();
+    } else {
+      finalizeVertexEditing();
+    }
+  };
+
+  const handleConfirmNo = () => {
+    if (isSavingVertexEdit) return;
+    setVertexConfirm(null);
   };
 
   const startMove = () => {
@@ -1459,7 +2035,7 @@ export default function LeftDock() {
     setUIMode("translateLayer");
   };
 
-  const stopAll = () => {
+  const stopAll = (opts?: { preserveFocus?: boolean; silent?: boolean }) => {
     if (!map) return;
     const prev = uiMode;
 
@@ -1505,14 +2081,21 @@ export default function LeftDock() {
     setDeleteVertexOn(false);
     setUIMode("idle");
     setBusy(false);
-    setFocus?.(null);
+    if (!opts?.preserveFocus) {
+      setFocus?.(null);
+    }
 
     // Hide drawing workflow UI
     setShowDrawingToolbar(false);
     setShowDrawingForm(false);
     setIsSavingDrawing(false);
-    setIsMultiMode(false);
-    setPendingMultiMode(false);
+
+    // Reset vertex editing UI
+    vertexSessionRef.current = null;
+    setVertexToolbarState(null);
+    setVertexEditDirty(false);
+    setIsSavingVertexEdit(false);
+    setVertexConfirm(null);
 
     // Reset visual feedback
     if (map) {
@@ -1520,10 +2103,12 @@ export default function LeftDock() {
       map.getTargetElement().style.backgroundColor = "";
     }
 
-    if (prev === "modify") flash("Anda keluar dari mode edit");
-    else if (prev === "translate") flash("Anda keluar dari mode geser");
-    else if (prev === "translateLayer")
-      flash("Anda keluar dari mode geser layer");
+    if (!opts?.silent) {
+      if (prev === "modify") flash("Anda keluar dari mode edit");
+      else if (prev === "translate") flash("Anda keluar dari mode geser");
+      else if (prev === "translateLayer")
+        flash("Anda keluar dari mode geser layer");
+    }
   };
 
   const toggleDeleteVertex = () => {
@@ -1633,109 +2218,24 @@ export default function LeftDock() {
     }
   };
 
-  const closeDeleteConfirm = useCallback(() => {
-    setShowDeleteConfirm(false);
-    setIsDeleteInProgress(false);
-    window.setTimeout(() => {
-      previousFocusRef.current?.focus?.();
-    }, 0);
-  }, []);
-
-  const handleDeleteBackdropClick = () => {
-    if (isDeleteInProgress) return;
-    closeDeleteConfirm();
+  const quickPolygon = (type: Exclude<Kind, "custom">, name?: string) => {
+    stopAll();
+    const layerName =
+      name || `${type.charAt(0).toUpperCase() + type.slice(1)} Baru`;
+    setDrawingLayerType(type);
+    setNewLayerName(layerName);
+    startDraw({ type, name: layerName });
   };
-
-  const handleCancelDelete = () => {
-    if (isDeleteInProgress) return;
-    closeDeleteConfirm();
-  };
-
-  const handleConfirmDelete = async () => {
-    if (isDeleteInProgress) return;
-    setIsDeleteInProgress(true);
-    try {
-      await deleteSelectedFeature();
-      closeDeleteConfirm();
-    } catch (error) {
-      console.error("Failed to delete feature:", error);
-      setIsDeleteInProgress(false);
-    }
-  };
-
-  const handleDeleteClick = () => {
-    if (isDeleteInProgress) return;
-    previousFocusRef.current =
-      deleteButtonRef.current ??
-      ((document.activeElement as HTMLElement | null) || null);
-    setShowDeleteConfirm(true);
-  };
-
-  useEffect(() => {
-    if (!showDeleteConfirm) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        if (!isDeleteInProgress) {
-          closeDeleteConfirm();
-        }
-        return;
-      }
-
-      if (event.key === "Tab") {
-        const dialog = deleteDialogRef.current;
-        if (!dialog) return;
-        const focusable = dialog.querySelectorAll<HTMLElement>(
-          "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])"
-        );
-        if (focusable.length === 0) {
-          event.preventDefault();
-          return;
-        }
-        const first = focusable[0];
-        const last = focusable[focusable.length - 1];
-        if (event.shiftKey) {
-          if (document.activeElement === first) {
-            event.preventDefault();
-            last.focus();
-          }
-        } else if (document.activeElement === last) {
-          event.preventDefault();
-          first.focus();
-        }
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [showDeleteConfirm, isDeleteInProgress, closeDeleteConfirm]);
-
-  useEffect(() => {
-    if (!showDeleteConfirm) return;
-    const timer = window.setTimeout(() => {
-      deleteConfirmButtonRef.current?.focus();
-    }, 20);
-    return () => window.clearTimeout(timer);
-  }, [showDeleteConfirm]);
 
   // Drawing workflow handlers
   const handleDrawingDone = () => {
-    setPendingMultiMode(isMultiMode);
     setShowDrawingToolbar(false);
     setShowDrawingForm(true);
-    if (isMultiMode) {
-      setIsMultiMode(false);
-    }
   };
 
   const handleDrawingCancel = () => {
     setShowDrawingToolbar(false);
     setShowDrawingForm(false);
-    setPendingMultiMode(false);
-    setIsMultiMode(false);
 
     // Clear drawn features from the session before stopping
     if (drawSessionRef.current) {
@@ -1912,64 +2412,26 @@ export default function LeftDock() {
         return;
       }
 
-      const expectedFormCount = pendingMultiMode ? 1 : features.length;
-
-      if (formData.length !== expectedFormCount) {
+      if (formData.length !== features.length) {
         flash("Jumlah form tidak sesuai dengan jumlah polygon", "err");
         return;
       }
 
-      type SavedEntry = {
-        feature: OLFeature<Geometry>;
-        form: { layerType: string; regionName: string };
-        api: SpatialFeature;
-      };
+      const createdFeatures: SpatialFeature[] = [];
 
-      const savedEntries: SavedEntry[] = [];
+      for (let i = 0; i < features.length; i++) {
+        const feature = features[i];
+        const geometry = feature.getGeometry();
 
-      if (pendingMultiMode) {
-        const combinedCoords: PolygonRings[] = [];
-
-        features.forEach((feature, index) => {
-          const geometry = feature.getGeometry();
-          if (!geometry) {
-            console.warn(
-              `Feature ${index} has no geometry, skipping for multi polygon build`
-            );
-            return;
-          }
-
-          const geomType = geometry.getType();
-          if (geomType === "Polygon") {
-            combinedCoords.push(
-              ((geometry as Polygon).getCoordinates() as unknown) as PolygonRings
-            );
-          } else if (geomType === "MultiPolygon") {
-            (geometry as MultiPolygon)
-              .getCoordinates()
-              .forEach((coords) =>
-                combinedCoords.push((coords as unknown) as PolygonRings)
-              );
-          } else {
-            console.warn(
-              `[Drawing] Unsupported geometry type "${geomType}" encountered while building MultiPolygon`
-            );
-          }
-        });
-
-        if (!combinedCoords.length) {
-          throw new Error("Tidak ada polygon valid untuk MultiPolygon");
+        if (!geometry) {
+          console.warn(`Feature ${i} has no geometry`);
+          continue;
         }
 
-        const multiGeometry = new MultiPolygon(combinedCoords);
-        const wktGeometry = geometryToWKT(multiGeometry);
-
+        const wktGeometry = geometryToWKT(geometry);
         if (!wktGeometry) {
-          throw new Error("Gagal mengubah MultiPolygon ke format WKT");
+          throw new Error(`Failed to convert polygon ${i} to WKT format`);
         }
-
-        const formEntry =
-          formData[0] ?? { layerType: "", regionName: "" };
 
         const payload = {
           identifier: "spatialFeature.uuid",
@@ -1981,7 +2443,7 @@ export default function LeftDock() {
               attributeKey: "spatialFeature.type",
               attributeLabel: "Type",
               attributeValueType: 1,
-              attributeValue: formEntry.layerType || "",
+              attributeValue: formData[i]?.layerType || "",
               status: 1,
             },
             {
@@ -1995,105 +2457,68 @@ export default function LeftDock() {
               attributeKey: "spatialFeature.refWilayah",
               attributeLabel: "Ref Wilayah",
               attributeValueType: 1,
-              attributeValue: formEntry.regionName || "",
+              attributeValue: formData[i]?.regionName || "",
               status: 1,
             },
           ],
         };
 
-        console.log("Creating MultiPolygon spatial feature:", payload);
+        console.log(`Creating spatial feature ${i + 1}:`, payload);
 
         const createdFeature = await createSpatialFeature(payload);
-
-        const combinedFeature = new OLFeature<Geometry>(
-          multiGeometry.clone()
+        console.log(
+          `[DEBUG] Raw API response for feature ${i + 1}:`,
+          createdFeature
         );
-        combinedFeature.set("id", String(createdFeature.id));
-        combinedFeature.set("name", formEntry.regionName || "");
-        combinedFeature.set("layerType", formEntry.layerType || "");
-        combinedFeature.set("regionName", formEntry.regionName || "");
-        combinedFeature.set("_sessionParts", features.length);
-        combinedFeature.set("_rawAttributes", createdFeature.attribute || []);
+        console.log(
+          `[DEBUG] API response ID type: ${typeof createdFeature.id}, value: ${
+            createdFeature.id
+          }`
+        );
+        createdFeatures.push(createdFeature);
 
-        savedEntries.push({
-          feature: combinedFeature,
-          form: formEntry,
-          api: createdFeature,
-        });
-      } else {
-        for (let i = 0; i < features.length; i++) {
-          const feature = features[i];
-          const geometry = feature.getGeometry();
+        const databaseId = createdFeature.id;
+        console.log(
+          `[DEBUG] Extracted database ID: ${databaseId} (type: ${typeof databaseId}) for feature ${
+            i + 1
+          }`
+        );
 
-          if (!geometry) {
-            console.warn(`Feature ${i} has no geometry`);
-            continue;
+        feature.set("id", String(databaseId));
+        feature.set("name", formData[i]?.regionName || "");
+
+        console.log(
+          `[DEBUG] Feature ${i + 1} updated with database ID: ${databaseId}`,
+          {
+            featureId: feature.getId(),
+            featureProperties: feature.getProperties(),
+            idProperty: feature.get("id"),
+            idPropertyType: typeof feature.get("id"),
           }
-
-          const wktGeometry = geometryToWKT(geometry);
-          if (!wktGeometry) {
-            throw new Error(`Failed to convert polygon ${i} to WKT format`);
-          }
-
-          const payload = {
-            identifier: "spatialFeature.uuid",
-            label: "uuid",
-            value: generateUUID(),
-            status: 1,
-            attribute: [
-              {
-                attributeKey: "spatialFeature.type",
-                attributeLabel: "Type",
-                attributeValueType: 1,
-                attributeValue: formData[i]?.layerType || "",
-                status: 1,
-              },
-              {
-                attributeKey: "spatialFeature.geometry",
-                attributeLabel: "Geometry",
-                attributeValueType: 13,
-                attributeValue: wktGeometry,
-                status: 1,
-              },
-              {
-                attributeKey: "spatialFeature.refWilayah",
-                attributeLabel: "Ref Wilayah",
-                attributeValueType: 1,
-                attributeValue: formData[i]?.regionName || "",
-                status: 1,
-              },
-            ],
-          };
-
-          console.log(`Creating spatial feature ${i + 1}:`, payload);
-
-          const createdFeature = await createSpatialFeature(payload);
-
-          const databaseId = createdFeature.id;
-          feature.set("id", String(databaseId));
-          feature.set("name", formData[i]?.regionName || "");
-          feature.set("layerType", formData[i]?.layerType || "");
-          feature.set("regionName", formData[i]?.regionName || "");
-          feature.set("_rawAttributes", createdFeature.attribute || []);
-
-          savedEntries.push({
-            feature,
-            form: formData[i],
-            api: createdFeature,
-          });
-        }
+        );
       }
 
-      if (!savedEntries.length) {
-        throw new Error("Tidak ada feature yang berhasil disimpan.");
-      }
+      const featureEntries = features.map((feature, index) => ({
+        feature,
+        form: formData[index],
+        api: createdFeatures[index],
+      }));
 
-      const createdApis = savedEntries.map((entry) => entry.api);
+      const featuresByType = new Map<
+        string,
+        Array<{
+          feature: OLFeature<Geometry>;
+          form: { layerType: string; regionName: string };
+          api: SpatialFeature;
+        }>
+      >();
+      const fallbackEntries: Array<{
+        feature: OLFeature<Geometry>;
+        form: { layerType: string; regionName: string };
+        api: SpatialFeature;
+      }> = [];
 
-      const featuresByType = new Map<string, SavedEntry[]>();
-      const fallbackEntries: SavedEntry[] = [];
-
-      savedEntries.forEach((entry) => {
+      featureEntries.forEach((entry) => {
         const typeAttr = entry.api?.attribute?.find(
           (attr) => attr.attributeKey === "spatialFeature.type"
         );
@@ -2216,10 +2641,7 @@ export default function LeftDock() {
       if (fallbackEntries.length > 0) {
         const fallbackLayerName =
           fallbackEntries[0]?.form?.layerType || session.name || "Layer Baru";
-        const fallbackLayer = createNewPolygonLayer(
-          fallbackLayerName,
-          session.kind ?? DEFAULT_DRAW_KIND
-        );
+        const fallbackLayer = createNewPolygonLayer(fallbackLayerName);
 
         if (fallbackLayer) {
           fallbackEntries.forEach((entry) => {
@@ -2253,14 +2675,12 @@ export default function LeftDock() {
         }
       }
 
-      if (!focusHandled && createdApis.length > 0) {
-        const first = createdApis[0];
+      if (!focusHandled && createdFeatures.length > 0) {
+        const first = createdFeatures[0];
         const fallbackName =
           first.attribute?.find(
             (attr) => attr.attributeKey === "spatialFeature.refWilayah"
-          )?.attributeValue ||
-          savedEntries[0]?.form?.regionName ||
-          "";
+          )?.attributeValue || formData[0]?.regionName || "";
         const typeAttr = first.attribute?.find(
           (attr) => attr.attributeKey === "spatialFeature.type"
         );
@@ -2285,12 +2705,12 @@ export default function LeftDock() {
 
       if (focusHandled) {
         flash(
-          `Berhasil menyimpan ${savedEntries.length} feature dan memuat data terbaru dari server.`,
+          `Berhasil menyimpan ${createdFeatures.length} feature dan memuat data terbaru dari server.`,
           "ok"
         );
       } else {
         flash(
-          `Berhasil menyimpan ${savedEntries.length} feature. Silakan load layer dari panel kiri untuk melihat hasil.`,
+          `Berhasil menyimpan ${createdFeatures.length} feature. Silakan load layer dari panel kiri untuk melihat hasil.`,
           "ok"
         );
       }
@@ -2333,7 +2753,6 @@ export default function LeftDock() {
 
   const handleFormCancel = () => {
     setShowDrawingForm(false);
-    setPendingMultiMode(false);
   };
 
   /* ---------- Load & Export UI ---------- */
@@ -2705,133 +3124,6 @@ export default function LeftDock() {
     }, 64);
   }
   /* ---------- UI ---------- */
-  const deleteConfirmationPortal =
-    showDeleteConfirm && typeof document !== "undefined"
-      ? createPortal(
-          <>
-            <style>{`
-              @keyframes deleteOverlayFade {
-                from { opacity: 0; }
-                to { opacity: 1; }
-              }
-              @keyframes deleteDialogScale {
-                from { opacity: 0; transform: translateY(16px) scale(0.96); }
-                to { opacity: 1; transform: translateY(0) scale(1); }
-              }
-            `}</style>
-            <div
-              onClick={handleDeleteBackdropClick}
-              style={{
-                position: "fixed",
-                inset: 0,
-                background: "rgba(15, 23, 42, 0.55)",
-                backdropFilter: "blur(2px)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                zIndex: 5200,
-                animation: "deleteOverlayFade 0.18s ease-out",
-              }}
-            >
-              <div
-                ref={deleteDialogRef}
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="delete-confirm-title"
-                aria-describedby="delete-confirm-description"
-                onClick={(event) => event.stopPropagation()}
-                style={{
-                  width: "min(90%, 380px)",
-                  background: "#ffffff",
-                  borderRadius: 16,
-                  boxShadow: "0 24px 48px rgba(15,23,42,0.32)",
-                  padding: "24px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "16px",
-                  animation: "deleteDialogScale 0.22s ease-out",
-                }}
-              >
-                <div
-                  id="delete-confirm-title"
-                  style={{
-                    fontSize: "18px",
-                    fontWeight: 700,
-                    color: "#111827",
-                  }}
-                >
-                  Hapus Feature
-                </div>
-                <p
-                  id="delete-confirm-description"
-                  style={{
-                    margin: 0,
-                    fontSize: "14px",
-                    lineHeight: 1.6,
-                    color: "#4b5563",
-                  }}
-                >
-                  Apakah kamu yakin mau hapus feature ini?
-                </p>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "flex-end",
-                    gap: "12px",
-                    marginTop: "8px",
-                  }}
-                >
-                  <button
-                    type="button"
-                    onClick={handleCancelDelete}
-                    disabled={isDeleteInProgress}
-                    style={{
-                      border: "1px solid #d1d5db",
-                      background: "#fff",
-                      color: "#374151",
-                      borderRadius: 8,
-                      padding: "10px 18px",
-                      fontSize: "14px",
-                      fontWeight: 500,
-                      cursor: isDeleteInProgress ? "not-allowed" : "pointer",
-                      transition: "all 0.2s ease",
-                      opacity: isDeleteInProgress ? 0.6 : 1,
-                    }}
-                  >
-                    Batal
-                  </button>
-                  <button
-                    type="button"
-                    ref={deleteConfirmButtonRef}
-                    onClick={handleConfirmDelete}
-                    disabled={isDeleteInProgress}
-                    style={{
-                      border: "none",
-                      background: isDeleteInProgress ? "#f87171" : "#ef4444",
-                      color: "#ffffff",
-                      borderRadius: 8,
-                      padding: "10px 20px",
-                      fontSize: "14px",
-                      fontWeight: 600,
-                      cursor: isDeleteInProgress ? "not-allowed" : "pointer",
-                      transition: "all 0.2s ease",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "8px",
-                      boxShadow: "0 10px 20px rgba(239,68,68,0.25)",
-                      opacity: isDeleteInProgress ? 0.85 : 1,
-                    }}
-                  >
-                    <span className="icon">delete_forever</span>
-                    {isDeleteInProgress ? "Menghapus..." : "Hapus"}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </>,
-          document.body
-        )
-      : null;
   return (
     <div className="leftstack">
       {uiMode !== "idle" && (
@@ -2896,6 +3188,31 @@ export default function LeftDock() {
           aria-hidden={!isOpen("draw")}
         >
           <div className="ld-body-in">
+            <div className="form-group">
+              <label>Nama Layer Baru</label>
+              <input
+                type="text"
+                value={newLayerName}
+                onChange={(e) => setNewLayerName(e.target.value)}
+                placeholder="Nama wilayah/polygon..."
+                className="form-input"
+              />
+            </div>
+
+            <div className="form-group">
+              <label>Tipe Batas Wilayah</label>
+              <select
+                value={drawingLayerType}
+                onChange={(e) => setDrawingLayerType(e.target.value as Kind)}
+                className="form-select"
+              >
+                <option value="kabupaten">Kabupaten</option>
+                <option value="kecamatan">Kecamatan</option>
+                <option value="kelurahan">Kelurahan</option>
+                <option value="custom">Custom/Lainnya</option>
+              </select>
+            </div>
+
             <div
               className="tools"
               style={{
@@ -2929,9 +3246,6 @@ export default function LeftDock() {
                   }
                   const next = !isMultiMode;
                   setIsMultiMode(next);
-                  if (drawSessionRef.current) {
-                    (drawSessionRef.current as any).isMulti = next;
-                  }
                   flash(
                     next
                       ? "Mode MultiPolygon aktif."
@@ -2944,7 +3258,9 @@ export default function LeftDock() {
               <button
                 className="circle"
                 title="Edit vertices"
-                onClick={startEdit}
+                onClick={() => {
+                  void startEdit();
+                }}
                 disabled={uiMode === "modify"}
                 style={{
                   background: "#10b981",
@@ -2990,11 +3306,9 @@ export default function LeftDock() {
                 <span className="icon">content_cut</span>
               </button>
               <button
-                ref={deleteButtonRef}
                 className="circle danger"
                 title="Hapus feature terpilih"
-                onClick={handleDeleteClick}
-                aria-haspopup="dialog"
+                onClick={() => deleteSelectedFeature()}
               >
                 <span className="icon">delete_forever</span>
               </button>
@@ -3005,6 +3319,32 @@ export default function LeftDock() {
               >
                 <span className="icon">close</span>
               </button>
+            </div>
+
+            <div className="quick-actions">
+              <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+                Aksi Cepat:
+              </div>
+              <div className="quick-buttons">
+                <button
+                  className="btn-quick kabupaten"
+                  onClick={() => quickPolygon("kabupaten")}
+                >
+                  Kabupaten
+                </button>
+                <button
+                  className="btn-quick kecamatan"
+                  onClick={() => quickPolygon("kecamatan")}
+                >
+                  Kecamatan
+                </button>
+                <button
+                  className="btn-quick kelurahan"
+                  onClick={() => quickPolygon("kelurahan")}
+                >
+                  Kelurahan
+                </button>
+              </div>
             </div>
 
             <div className="muted" style={{ marginTop: 12, fontSize: 11 }}>
@@ -3188,6 +3528,29 @@ export default function LeftDock() {
         }}
       />
 
+      {uiMode === "modify" && vertexToolbarState && (
+        <VertexEditingToolbar
+          position={vertexToolbarState.position}
+          featureName={vertexToolbarState.featureName}
+          isDirty={vertexEditDirty}
+          isSaving={isSavingVertexEdit}
+          onFinish={requestFinishEditing}
+          onSave={requestSaveEditing}
+          onCancel={requestFinishEditing}
+        />
+      )}
+
+      {vertexConfirm && (
+        <ConfirmModal
+          open={true}
+          title="Konfirmasi Perubahan"
+          message="Apakah kamu yakin ingin mengubah?"
+          busy={isSavingVertexEdit}
+          onConfirm={handleConfirmYes}
+          onCancel={handleConfirmNo}
+        />
+      )}
+
       {/* Drawing Workflow Components */}
       {showDrawingToolbar && (
         <DrawingToolbar
@@ -3195,7 +3558,6 @@ export default function LeftDock() {
           onCancel={handleDrawingCancel}
           featureCount={drawSessionRef.current?.src.getFeatures().length || 0}
           isLoading={isSavingDrawing}
-          isMultiMode={isMultiMode}
         />
       )}
 
@@ -3206,12 +3568,8 @@ export default function LeftDock() {
           onSave={handleFormSave}
           featureCount={drawSessionRef.current.src.getFeatures().length}
           isLoading={isSavingDrawing}
-          isMultiFeature={pendingMultiMode}
         />
       )}
-
-      {deleteConfirmationPortal}
     </div>
   );
 }
-
