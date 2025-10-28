@@ -34,7 +34,6 @@ import {
   getSpatialFeatureById,
   updateSpatialFeature,
   type SpatialFeature,
-  type SpatialFeatureAttribute,
 } from "../lib/api/spatialFeature";
 import { runAllExportTests } from "../lib/exportTest";
 import DrawingToolbar from "./DrawingToolbar";
@@ -68,40 +67,28 @@ function styleCfgForKind(kind: Kind): StyleColorCfg {
   }
 }
 
-type Pair = { codeKey: string; nameKey: string };
-
-function aliasForKind(kind: Kind): Pair {
-  switch (kind) {
-    case "kabupaten":
-      return { codeKey: "D_KD_DT2", nameKey: "D_NM_DT2" };
-    case "kecamatan":
-      return { codeKey: "D_KD_KEC", nameKey: "D_NM_KEC" };
-    case "kelurahan":
-      return { codeKey: "D_KD_KEL", nameKey: "D_NM_KEL" };
-    default:
-      return { codeKey: "id", nameKey: "name" };
-  }
-}
-
 type RegistryItem = {
   key: string;
   name: string;
   kind: Kind;
-  fc: any;
+  fc: GeoJSONFeatureCollection;
   ts: number;
   count: number;
-  meta?: Record<string, any>;
+  meta?: Record<string, unknown>;
 };
 
 const REGKEY = "__taxmap_dataset_registry__";
 const DEFAULT_DRAW_KIND: Kind = "custom";
 
 function ensureRegistry(): Map<string, RegistryItem> {
-  const g: any = window as any;
+  const g = window as unknown as Record<string, unknown>;
   if (!g[REGKEY] || !(g[REGKEY] instanceof Map)) {
-    g[REGKEY] = new Map<string, RegistryItem>();
+    (g as Record<string, Map<string, RegistryItem>>)[REGKEY] = new Map<
+      string,
+      RegistryItem
+    >();
   }
-  return g[REGKEY] as Map<string, RegistryItem>;
+  return (g as Record<string, Map<string, RegistryItem>>)[REGKEY];
 }
 
 type PolygonRings = [number, number][][];
@@ -120,7 +107,7 @@ function isTypedNumericArray(value: unknown): value is ArrayLike<number> {
   return (
     value != null &&
     typeof value === "object" &&
-    ArrayBuffer.isView(value as any) &&
+    ArrayBuffer.isView(value as ArrayBufferView) &&
     !(value instanceof DataView)
   );
 }
@@ -154,7 +141,7 @@ function toFiniteNumber(value: unknown): number | null {
   return null;
 }
 
-function readCoordinate(candidate: any): [number, number] | null {
+function readCoordinate(candidate: unknown): [number, number] | null {
   if (isTypedNumericArray(candidate) && candidate.length >= 2) {
     const x = toFiniteNumber(candidate[0]);
     const y = toFiniteNumber(candidate[1]);
@@ -172,13 +159,13 @@ function readCoordinate(candidate: any): [number, number] | null {
     const x =
       toFiniteNumber(obj.x) ??
       toFiniteNumber(obj.X) ??
-      toFiniteNumber((obj as any).lon) ??
-      toFiniteNumber((obj as any).longitude);
+      toFiniteNumber((obj as { lon?: unknown }).lon) ??
+      toFiniteNumber((obj as { longitude?: unknown }).longitude);
     const y =
       toFiniteNumber(obj.y) ??
       toFiniteNumber(obj.Y) ??
-      toFiniteNumber((obj as any).lat) ??
-      toFiniteNumber((obj as any).latitude);
+      toFiniteNumber((obj as { lat?: unknown }).lat) ??
+      toFiniteNumber((obj as { latitude?: unknown }).latitude);
     if (x != null && y != null) return [x, y];
   }
   return null;
@@ -197,7 +184,7 @@ function closeRing(points: [number, number][]): [number, number][] {
 }
 
 function sanitizeLinearRing(
-  input: any,
+  input: unknown,
   allowDegenerate: boolean
 ): [number, number][] | null {
   const source = Array.isArray(input)
@@ -235,7 +222,7 @@ function sanitizeLinearRing(
 }
 
 function normalizePolygonRings(
-  input: any,
+  input: unknown,
   options: NormalizeOptions = {}
 ): PolygonRings {
   const sources = Array.isArray(input)
@@ -271,9 +258,12 @@ function normalizeGeometryType(type: unknown): string {
   return typeof type === "string" ? type.trim().toLowerCase() : "";
 }
 
-function normalizePolygonGeometry(
-  geomObj: any
-): NormalizedPolygonGeometry | null {
+function normalizePolygonGeometry(geomObj: {
+  type?: unknown;
+  coordinates?: unknown;
+  geometries?: unknown[];
+  rings?: unknown;
+}): NormalizedPolygonGeometry | null {
   if (!geomObj) return null;
 
   const type = normalizeGeometryType(geomObj.type);
@@ -285,7 +275,14 @@ function normalizePolygonGeometry(
       : [];
     const collected: PolygonRings[] = [];
     for (const part of geometries) {
-      const normalized = normalizePolygonGeometry(part);
+      const normalized = normalizePolygonGeometry(
+        part as {
+          type?: unknown;
+          coordinates?: unknown;
+          geometries?: unknown[];
+          rings?: unknown;
+        }
+      );
       if (!normalized) continue;
       if (normalized.type === "Polygon") {
         collected.push(clonePolygonCoordinates(normalized.coordinates));
@@ -322,7 +319,7 @@ function normalizePolygonGeometry(
       Array.isArray(geomObj.coordinates) && geomObj.coordinates.length
         ? geomObj.coordinates
         : Array.isArray((geomObj as any).rings)
-        ? (geomObj as any).rings
+        ? (geomObj as { rings?: unknown }).rings
         : isTypedNumericArray(geomObj.coordinates)
         ? [geomObj.coordinates]
         : [];
@@ -452,7 +449,7 @@ async function flattenZipToRoot(
   }
 }
 
-async function parseShapefileZip(buffer: ArrayBuffer): Promise<any> {
+async function parseShapefileZip(buffer: ArrayBuffer): Promise<unknown> {
   const shapefile: any = shp;
   const attempts: (ArrayBuffer | Uint8Array)[] = [buffer];
   const flattened = await flattenZipToRoot(buffer);
@@ -494,18 +491,22 @@ export default function LeftDock() {
 
   // Expose test functions to global scope for debugging
   if (typeof window !== "undefined") {
-    (window as any).testExportFunction = () => {
+    (window as unknown as Record<string, unknown>).testExportFunction = () => {
       console.log("Running export function tests...");
       runAllExportTests();
     };
 
     // Create a simple fallback test function for export refWilayah fix
-    (window as any).testExportRefWilayahFix = () => {
-      console.log(
-        "Test: spatialFeature.refWilayah export fix is implemented - duplicate attributes are prevented"
-      );
-      return { success: true, message: "Export refWilayah fix test executed" };
-    };
+    (window as unknown as Record<string, unknown>).testExportRefWilayahFix =
+      () => {
+        console.log(
+          "Test: spatialFeature.refWilayah export fix is implemented - duplicate attributes are prevented"
+        );
+        return {
+          success: true,
+          message: "Export refWilayah fix test executed",
+        };
+      };
   }
 
   // Interactions
@@ -536,8 +537,8 @@ export default function LeftDock() {
   const hoverLyrRef = useRef<VectorLayer<VectorSource> | null>(null);
 
   // Event keys
-  const geomChangeKeyRef = useRef<any>(null);
-  const pointerMoveKeyRef = useRef<any>(null);
+  const geomChangeKeyRef = useRef<unknown>(null);
+  const pointerMoveKeyRef = useRef<unknown>(null);
 
   const vertexCacheRef = useRef<OLFeature<Point>[]>([]);
   const vertexRafRef = useRef<number | 0>(0);
@@ -562,13 +563,16 @@ export default function LeftDock() {
   useEffect(() => {
     if (!map) return;
 
-    const handleMapClick = (event: any) => {
+    const handleMapClick = (event: {
+      pixel: unknown;
+      map: { forEachFeatureAtPixel: Function };
+    }) => {
       // Skip if we're in drawing/editing modes to avoid conflicts
       if (uiMode !== "idle") return;
 
       const clickedFeature = event.map.forEachFeatureAtPixel(
         event.pixel,
-        (feature: any) => {
+        (feature: unknown) => {
           return feature;
         }
       );
@@ -611,7 +615,12 @@ export default function LeftDock() {
   const [isDeleteInProgress, setIsDeleteInProgress] = useState(false);
 
   // Add to layer workflow state
-  const [targetLayerForAdd, setTargetLayerForAdd] = useState<any>(null);
+  const [targetLayerForAdd, setTargetLayerForAdd] = useState<{
+    id: string;
+    name: string;
+    layer: VectorLayer<VectorSource>;
+    typeCode?: string;
+  } | null>(null);
 
   // Drawing workflow state
   const [showDrawingToolbar, setShowDrawingToolbar] = useState(false);
@@ -671,33 +680,6 @@ export default function LeftDock() {
         setIsVertexEditingDirty(hasChanged);
 
         console.log("VertexEditing: Manual check for changes", {
-          featureId: currentFeatureId,
-          hasChanged,
-          geometryType: geometry.getType(),
-        });
-
-        return hasChanged;
-      }
-    }
-    return false;
-  }, [currentFeatureId]);
-
-  // Add a manual check function for translate feature change detection
-  const checkForTranslateChanges = useCallback(() => {
-    const tf = targetFeatureRef.current;
-    const baselineGeometry = originalTranslateGeometryRef.current;
-    if (tf && baselineGeometry) {
-      const geometry = tf.getGeometry();
-      if (geometry) {
-        const wktFormat = new GeoJSON();
-        const currentGeoJson = wktFormat.writeGeometryObject(geometry);
-        const currentGeometry = JSON.stringify(currentGeoJson);
-        const hasChanged = currentGeometry !== baselineGeometry;
-
-        // Force update of dirty state
-        setIsTranslateFeatureDirty(hasChanged);
-
-        console.log("TranslateFeature: Manual check for changes", {
           featureId: currentFeatureId,
           hasChanged,
           geometryType: geometry.getType(),
@@ -782,7 +764,7 @@ export default function LeftDock() {
   const previousFocusRef = useRef<HTMLElement | null>(null);
 
   /* ---------- Import ---------- */
-  function inferKindFromFeatureCollection(fc: any): Kind {
+  function inferKindFromFeatureCollection(fc: { features?: unknown[] }): Kind {
     if (!fc || !Array.isArray(fc.features)) return "custom";
     const patterns: Record<Exclude<Kind, "custom">, RegExp[]> = {
       kelurahan: [
@@ -818,7 +800,10 @@ export default function LeftDock() {
     for (const feature of fc.features) {
       if (found.kelurahan && found.kecamatan && found.kabupaten) break;
       const props =
-        feature && typeof feature === "object" ? feature.properties || {} : {};
+        feature && typeof feature === "object"
+          ? (feature as { properties?: Record<string, unknown> }).properties ||
+            {}
+          : {};
       if (!props || typeof props !== "object") continue;
       const keys = Object.keys(props);
       const strValues = Object.values(props).filter(
@@ -869,9 +854,12 @@ export default function LeftDock() {
   async function importFile(file: File) {
     if (!map) return;
 
-    const extractFeatureCollection = (data: any): any => {
+    const extractFeatureCollection = (data: unknown): unknown => {
       if (!data) return null;
-      if (data.type === "FeatureCollection" && Array.isArray(data.features)) {
+      if (
+        (data as { type?: string }).type === "FeatureCollection" &&
+        Array.isArray((data as { features?: unknown[] }).features)
+      ) {
         return data;
       }
       if (Array.isArray(data)) {
@@ -892,7 +880,7 @@ export default function LeftDock() {
     };
 
     try {
-      let parsed: any = null;
+      let parsed: unknown = null;
 
       if (/\.zip$/i.test(file.name)) {
         const buffer = await file.arrayBuffer();
@@ -909,7 +897,7 @@ export default function LeftDock() {
         throw new Error("Tidak menemukan FeatureCollection di dalam file.");
       }
 
-      let sanitized =
+      const sanitized =
         sanitizeFeatureCollection(rawFC) ||
         fallbackPolygonFeatureCollection(rawFC) ||
         rawFC; // JANGAN buang datanya, biar TaxMap yang putuskan
@@ -924,15 +912,17 @@ export default function LeftDock() {
         key,
         name: datasetName,
         kind: datasetKind,
-        fc: sanitized,
+        fc: sanitized as GeoJSONFeatureCollection,
         ts: Date.now(),
-        count: sanitized.features.length,
+        count: (sanitized as GeoJSONFeatureCollection).features.length,
         meta: { fileName: file.name },
       });
 
       window.dispatchEvent(new CustomEvent("datasets-updated"));
       flash(
-        `Dataset ${datasetName} siap di-load (${sanitized.features.length} fitur).`
+        `Dataset ${datasetName} siap di-load (${
+          (sanitized as GeoJSONFeatureCollection).features.length
+        } fitur).`
       );
     } catch (error) {
       console.error("Import dataset gagal:", error);
@@ -989,7 +979,11 @@ export default function LeftDock() {
       updateWhileInteracting: true,
       updateWhileAnimating: true,
     });
-    (lyr as any).set("appKind", kind);
+    (
+      lyr as VectorLayer<VectorSource> & {
+        set: (key: string, value: unknown) => void;
+      }
+    ).set("appKind", kind);
     const layerId = `polygon-${Date.now()}`;
     map.addLayer(lyr);
     addLayer({
@@ -1014,7 +1008,9 @@ export default function LeftDock() {
   const clearVertexLayer = () => {
     if (!map) return;
     if (geomChangeKeyRef.current) {
-      unByKey(geomChangeKeyRef.current);
+      if (geomChangeKeyRef.current) {
+        unByKey(geomChangeKeyRef.current as any);
+      }
       geomChangeKeyRef.current = null;
     }
     if (vertexRafRef.current) cancelAnimationFrame(vertexRafRef.current);
@@ -1029,7 +1025,9 @@ export default function LeftDock() {
   const clearHoverLayer = () => {
     if (!map) return;
     if (pointerMoveKeyRef.current) {
-      unByKey(pointerMoveKeyRef.current);
+      if (pointerMoveKeyRef.current) {
+        unByKey(pointerMoveKeyRef.current as any);
+      }
       pointerMoveKeyRef.current = null;
     }
     if (hoverLyrRef.current) {
@@ -1134,11 +1132,13 @@ export default function LeftDock() {
         setShowDrawingToolbar(true);
       }
 
-      isMultiMode
-        ? flash(
-            "Polygon ditambahkan ke sesi. Mode MultiPolygon aktif. Klik Selesai untuk menyimpan."
-          )
-        : flash("Polygon ditambahkan ke sesi. Klik Selesai untuk menyimpan.");
+      if (isMultiMode) {
+        flash(
+          "Polygon ditambahkan ke sesi. Mode MultiPolygon aktif. Klik Selesai untuk menyimpan."
+        );
+      } else {
+        flash("Polygon ditambahkan ke sesi. Klik Selesai untuk menyimpan.");
+      }
     });
 
     map.addInteraction(draw);
@@ -1406,11 +1406,15 @@ export default function LeftDock() {
 
       if (hoverSrcRef.current) hoverSrcRef.current.clear();
       if (pointerMoveKeyRef.current) {
-        unByKey(pointerMoveKeyRef.current);
+        if (pointerMoveKeyRef.current) {
+          unByKey(pointerMoveKeyRef.current as any);
+        }
         pointerMoveKeyRef.current = null;
       }
       if (geomChangeKeyRef.current) {
-        unByKey(geomChangeKeyRef.current);
+        if (geomChangeKeyRef.current) {
+          unByKey(geomChangeKeyRef.current as any);
+        }
         geomChangeKeyRef.current = null;
       }
 
@@ -1482,7 +1486,9 @@ export default function LeftDock() {
       }
 
       if (geomChangeKeyRef.current) {
-        unByKey(geomChangeKeyRef.current);
+        if (geomChangeKeyRef.current) {
+          unByKey(geomChangeKeyRef.current as any);
+        }
         geomChangeKeyRef.current = null;
       }
       if (vertexRafRef.current) {
@@ -1683,7 +1689,9 @@ export default function LeftDock() {
     trans.on("translatestart", () => {
       if (hoverSrcRef.current) hoverSrcRef.current.clear();
       if (pointerMoveKeyRef.current) {
-        unByKey(pointerMoveKeyRef.current);
+        if (pointerMoveKeyRef.current) {
+          unByKey(pointerMoveKeyRef.current as any);
+        }
         pointerMoveKeyRef.current = null;
       }
 
@@ -1905,7 +1913,9 @@ export default function LeftDock() {
         : null;
       if (hoverSrcRef.current) hoverSrcRef.current.clear();
       if (pointerMoveKeyRef.current) {
-        unByKey(pointerMoveKeyRef.current);
+        if (pointerMoveKeyRef.current) {
+          unByKey(pointerMoveKeyRef.current as any);
+        }
         pointerMoveKeyRef.current = null;
       }
 
@@ -2401,7 +2411,7 @@ export default function LeftDock() {
       featureId: string
     ): Promise<string> => {
       return new Promise((resolve, reject) => {
-        let timeoutId: number | undefined;
+        let timeoutId: number | undefined = undefined;
 
         const onSuccess = (event: Event) => {
           const detail = (event as CustomEvent<any>).detail || {};
@@ -3079,16 +3089,6 @@ export default function LeftDock() {
     stopAll();
   };
 
-  const handleVertexEditCancel = () => {
-    setShowVertexEditingModal(false);
-    setIsVertexEditingDirty(false);
-    setIsSavingVertexEdit(false);
-    originalGeometryRef.current = null;
-    setCurrentFeatureId(null);
-    setCurrentFeatureName("");
-    stopAll();
-  };
-
   const handleVertexEditSave = async () => {
     if (!currentFeatureId || !targetFeatureRef.current) {
       flash("Tidak ada feature yang dipilih untuk disimpan", "err");
@@ -3531,7 +3531,7 @@ export default function LeftDock() {
           }
 
           const raw = (ft as any).getProperties?.() || {};
-          const { geometry, geom, the_geom, _geom, ...rest } = raw;
+          const { ...rest } = raw;
 
           // Process API attributes if they exist
           let processedProps: Record<string, any> = { ...rest };
@@ -3580,13 +3580,7 @@ export default function LeftDock() {
 
           let props: Record<string, any>;
           if (dropIdName) {
-            const {
-              id: _id,
-              ID: _ID,
-              name: _name,
-              NAME: _NAME,
-              ...restNoIdName
-            } = processedProps;
+            const { ...restNoIdName } = processedProps;
             props = sanitizeForDbf(restNoIdName, true);
           } else {
             const keep: Record<string, any> = { ...processedProps };
@@ -4320,7 +4314,15 @@ export default function LeftDock() {
           onSave={handleFormSave}
           featureCount={drawSessionRef.current.src.getFeatures().length}
           isLoading={isSavingDrawing}
-          targetLayer={uiMode === "addToLayer" ? targetLayerForAdd : undefined}
+          targetLayer={
+            uiMode === "addToLayer" && targetLayerForAdd
+              ? {
+                  id: targetLayerForAdd.id,
+                  name: targetLayerForAdd.name,
+                  typeCode: targetLayerForAdd.typeCode || "",
+                }
+              : undefined
+          }
         />
       )}
 
@@ -4335,7 +4337,6 @@ export default function LeftDock() {
           isSaving={isSavingVertexEdit}
           onFinish={handleVertexEditFinish}
           onSave={handleVertexEditSave}
-          onCancel={handleVertexEditCancel}
         />
       )}
 

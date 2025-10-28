@@ -19,18 +19,22 @@ export const getAccessToken = getStoredToken;
 export const setAccessToken = (token: string) => {
   try {
     localStorage.setItem('ret_token', token);
-  } catch {}
+  } catch {
+    // localStorage not available
+  }
 };
 export const getTokenType = () => {
   return 'Bearer';
 };
-export const setTokenType = (_type: string) => {
+export const setTokenType = () => {
   // No-op - always use Bearer
 };
 export const clearAccessToken = () => {
   try {
     localStorage.removeItem('ret_token');
-  } catch {}
+  } catch {
+    // localStorage not available
+  }
 };
 
 // Additional exports for compatibility
@@ -50,7 +54,7 @@ export const postNoAuth = async <T>(path: string, body?: unknown): Promise<T> =>
     body: body ? JSON.stringify(body) : undefined
   });
   const txt = await res.text();
-  let data: any = null;
+  let data: unknown = null;
   try { data = txt ? JSON.parse(txt) : null; } catch { data = txt; }
   if (!res.ok) {
     throw new HttpError(url, res.status, data);
@@ -105,7 +109,7 @@ export async function request<T>(
   const res = await fetch(url, { ...init, headers });
 
   const txt = await res.text();
-  let data: any = null;
+  let data: unknown = null;
   try { data = txt ? JSON.parse(txt) : null; } catch { data = txt; }
 
   if (res.status === 401) {

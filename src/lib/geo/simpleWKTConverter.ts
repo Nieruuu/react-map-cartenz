@@ -15,7 +15,7 @@ const wktReader = new WKT();
  */
 export function simpleWKTToFeature(
   wkt: string,
-  properties: Record<string, any> = {}
+  properties: Record<string, unknown> = {}
 ): Feature<Geometry> | null {
   try {
     // Validate input

@@ -32,6 +32,10 @@ This is a **Tax Map React Application** built with TypeScript, Vite, and OpenLay
 12. **Advanced Metadata Editing**: Comprehensive attribute management with real-time validation
 13. **Loading State Management**: Global loading screen with progress tracking and error handling
 14. **Export Testing**: Built-in testing utilities for export functionality validation
+15. **Feature Translation**: Interactive feature translation and movement tools
+16. **Layer Translation**: Batch layer translation capabilities
+17. **Vertex Editing**: Advanced vertex editing for precise geometry modification
+18. **Vertex Editing Toolbar**: Specialized toolbar for vertex editing operations
 
 ## Project Structure
 
@@ -60,6 +64,10 @@ tax-map-react/
 │   │   ├── RightDock.tsx        # Right side panel
 │   │   ├── TaxMap.tsx           # Main map component
 │   │   ├── Topbar.tsx           # Top navigation bar
+│   │   ├── TranslateFeatureModal.tsx # Feature translation interface
+│   │   ├── TranslateLayerModal.tsx   # Layer translation interface
+│   │   ├── VertexEditingModal.tsx    # Vertex editing interface
+│   │   ├── VertexEditingToolbar.tsx  # Toolbar for vertex editing operations
 │   │   └── api/                 # API-specific components
 │   │       └── SmartGovLoader.tsx # Streamlined API loader
    
@@ -91,13 +99,6 @@ tax-map-react/
 │   ├── styles/                  # CSS styles
 │   │   └── ui.css
    
-│   ├── test/                    # Test files
-│   │   ├── apiLayerLoadTest.js  # API layer loading tests
-│   │   ├── apiLayerLoadSyntaxTest.js # API syntax tests
-│   │   ├── attributeFormatting.test.js # Attribute formatting tests
-│   │   ├── exportRefWilayahFix.test.d.ts # Export fix type definitions
-│   │   ├── exportRefWilayahFix.test.js # Export fix tests
-│   │   └── loadingScreenTest.cjs # Loading screen tests
    
 │   ├── types/                   # TypeScript type definitions
 │   │   └── shp-write.d.ts       # Shapefile writing types
@@ -109,9 +110,6 @@ tax-map-react/
 │   ├── main.tsx                 # Application entry point
 │   └── vite-env.d.ts            # Vite environment types
 
-├── tmp_zip/                     # Temporary zip extraction folder
-│   └── layers/
-
 ├── .env.example                 # Environment variables template
 ├── .gitignore                   # Git ignore file
 ├── eslint.config.js             # ESLint configuration
@@ -122,18 +120,8 @@ tax-map-react/
 ├── tsconfig.json                # TypeScript base configuration
 ├── tsconfig.node.json           # TypeScript Node configuration
 ├── vite.config.ts               # Vite configuration with environment support
-└── Documentation files:
-    ├── PROJECT_CONTEXT.md       # This file
-    ├── PROJECT_STRUCTURE.md     # Detailed project structure
-    ├── API_DEBUGGING_GUIDE.md   # API debugging guide
-    ├── API_IMPLEMENTATION_GUIDE.md # API implementation guide
-    ├── DEBUGGING_GUIDE_FOR_AI_ASSISTANT.md # AI assistant debugging guide
-    ├── ENVIRONMENT_CONFIGURATION_GUIDE.md # Environment configuration guide
-    ├── METADATA_EDITING_IMPLEMENTATION.md # Metadata editing implementation
-    ├── SPATIAL_FEATURE_API_IMPLEMENTATION.md # Spatial feature API docs
-    ├── LAYER_LOAD_MODAL_ENHANCEMENT.md # Layer loading enhancements
-    ├── LAYER_LOAD_MODAL_FIXES.md # Layer loading fixes
-    └── WKT_CONVERTER_ANALYSIS.md # WKT converter analysis
+├── PROJECT_CONTEXT.md           # This file
+└── PROJECT_STRUCTURE.md         # Detailed project structure
 ```
 
 ## API Architecture
@@ -507,6 +495,7 @@ The authentication system provides comprehensive state management:
 - Authentication flow testing with state synchronization
 - Real-time authentication state debugging in browser console
 - WIB timezone testing for timestamp functionality
+- Note: Test files have been removed as part of project cleanup
 
 ## Deployment
 

@@ -12,7 +12,7 @@ export interface TransformedFeature {
   name: string; // Uses attributeValue from spatialFeature.refWilayah as the region name
   typeCode: string;
   geometry: string | null;
-  properties: Record<string, any>;
+  properties: Record<string, unknown>;
   original: SpatialRow | SpatialFeature;
 }
 
@@ -40,8 +40,8 @@ const DEFAULT_KEYS = {
 export function extractAttribute(
   row: SpatialRow,
   key: string,
-  defaultValue: any = null
-): any {
+  defaultValue: unknown = null
+): unknown {
   if (!row.attribute || !Array.isArray(row.attribute)) {
     return defaultValue;
   }
@@ -59,8 +59,8 @@ export function extractAttribute(
 export function extractSpatialFeatureAttribute(
   feature: SpatialFeature,
   attributeKey: string,
-  defaultValue: any = null
-): any {
+  defaultValue: unknown = null
+): unknown {
   if (!feature.attribute || !Array.isArray(feature.attribute)) {
     return defaultValue;
   }
@@ -94,7 +94,7 @@ export function transformSpatialRow(
   const typeCode = extractAttribute(row, opts.typeKey) || '';
 
   // Build properties object - only include essential fields by default
-  let properties: Record<string, any> = {
+  const properties: Record<string, unknown> = {
     id: row.id,
     name: name,
   };
@@ -138,7 +138,7 @@ export function transformSpatialRow(
     uuid: row.value,
     name: String(name),
     typeCode: String(typeCode),
-    geometry: geometry,
+    geometry: geometry as string | null,
     properties,
     original: row,
   };
@@ -166,7 +166,7 @@ export function transformSpatialFeature(
   const typeCode = extractSpatialFeatureAttribute(feature, opts.typeKey) || '';
 
   // Build properties object - only include essential fields by default
-  let properties: Record<string, any> = {
+  const properties: Record<string, unknown> = {
     id: feature.id, // Use id field as the unique region code
     name: name, // Use attributeValue from spatialFeature.refWilayah as the region name
   };
@@ -210,7 +210,7 @@ export function transformSpatialFeature(
     uuid: feature.value,
     name: String(name),
     typeCode: String(typeCode),
-    geometry: geometry,
+    geometry: geometry as string | null,
     properties,
     original: feature,
   };

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface TranslateFeatureModalProps {
   isOpen: boolean;
@@ -28,6 +28,11 @@ export default function TranslateFeatureModal({
   const saveButtonRef = useRef<HTMLButtonElement>(null);
   const cancelButtonRef = useRef<HTMLButtonElement>(null);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+
+  const handleConfirmSave = useCallback(() => {
+    setShowConfirmDialog(false);
+    onSave();
+  }, [onSave]);
 
   // Handle keyboard navigation
   useEffect(() => {
@@ -103,7 +108,7 @@ export default function TranslateFeatureModal({
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isOpen, showConfirmDialog, isSaving, onCancel]);
+  }, [isOpen, showConfirmDialog, isSaving, onCancel, handleConfirmSave]);
 
   // Focus management
   useEffect(() => {
@@ -123,11 +128,6 @@ export default function TranslateFeatureModal({
     if (isDirty && !isSaving) {
       setShowConfirmDialog(true);
     }
-  };
-
-  const handleConfirmSave = () => {
-    setShowConfirmDialog(false);
-    onSave();
   };
 
   const handleCancelSave = () => {

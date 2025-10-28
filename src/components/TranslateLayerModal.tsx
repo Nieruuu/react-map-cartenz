@@ -23,13 +23,11 @@ const TranslateLayerModal: React.FC<TranslateLayerModalProps> = ({
   featureCount,
   isDirty,
   isSaving,
-  isOpen,
   onFinish,
   onSave,
   onCancel,
 }) => {
   const finishButtonRef = useRef<HTMLButtonElement>(null);
-  const saveButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     // Focus first action for keyboard navigation when toolbar appears
@@ -176,7 +174,6 @@ const TranslateLayerModal: React.FC<TranslateLayerModalProps> = ({
         </button>
 
         <button
-          ref={saveButtonRef}
           type="button"
           onClick={onSave}
           disabled={isSaving || !isDirty}

@@ -1,6 +1,5 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { SpatialFeatureAttribute } from "../lib/api/spatialFeature";
 
 type ModalPosition = {
   x: number;
@@ -16,7 +15,6 @@ interface VertexEditingModalProps {
   isSaving: boolean;
   onFinish: () => void;
   onSave: () => void;
-  onCancel: () => void;
 }
 
 const VertexEditingModal: React.FC<VertexEditingModalProps> = ({
@@ -28,7 +26,6 @@ const VertexEditingModal: React.FC<VertexEditingModalProps> = ({
   isSaving,
   onFinish,
   onSave,
-  onCancel,
 }) => {
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [pendingAction, setPendingAction] = useState<"finish" | "save" | null>(
@@ -39,6 +36,52 @@ const VertexEditingModal: React.FC<VertexEditingModalProps> = ({
   const confirmDialogRef = useRef<HTMLDivElement>(null);
   const confirmYesButtonRef = useRef<HTMLButtonElement>(null);
   const confirmNoButtonRef = useRef<HTMLButtonElement>(null);
+
+  const handleFinishClick = useCallback(() => {
+    if (isDirty) {
+      setPendingAction("finish");
+      setShowConfirmDialog(true);
+    } else {
+      onFinish();
+    }
+  }, [isDirty, onFinish]);
+
+  const handleSaveClick = useCallback(() => {
+    if (isDirty) {
+      setPendingAction("save");
+      setShowConfirmDialog(true);
+    }
+  }, [isDirty]);
+
+  const handleConfirmYes = useCallback(async () => {
+    if (!pendingAction) return;
+
+    setShowConfirmDialog(false);
+
+    if (pendingAction === "save") {
+      await onSave();
+    } else if (pendingAction === "finish") {
+      onFinish();
+    }
+
+    setPendingAction(null);
+  }, [pendingAction, onSave, onFinish]);
+
+  const handleConfirmNo = useCallback(() => {
+    setShowConfirmDialog(false);
+    setPendingAction(null);
+    // Return focus to appropriate button
+    if (pendingAction === "save") {
+      saveButtonRef.current?.focus();
+    } else if (pendingAction === "finish") {
+      finishButtonRef.current?.focus();
+    }
+  }, [pendingAction]);
+
+  const handleConfirmBackdropClick = () => {
+    if (isSaving) return;
+    handleConfirmNo();
+  };
 
   // Focus management when modal opens
   useEffect(() => {
@@ -71,7 +114,14 @@ const VertexEditingModal: React.FC<VertexEditingModalProps> = ({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, isSaving, isDirty, showConfirmDialog]);
+  }, [
+    isOpen,
+    isSaving,
+    isDirty,
+    showConfirmDialog,
+    handleSaveClick,
+    handleFinishClick,
+  ]);
 
   // Keyboard navigation for confirmation dialog
   useEffect(() => {
@@ -113,7 +163,7 @@ const VertexEditingModal: React.FC<VertexEditingModalProps> = ({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [showConfirmDialog]);
+  }, [showConfirmDialog, handleConfirmYes, handleConfirmNo]);
 
   // Focus management for confirmation dialog
   useEffect(() => {
@@ -124,57 +174,6 @@ const VertexEditingModal: React.FC<VertexEditingModalProps> = ({
       return () => clearTimeout(timer);
     }
   }, [showConfirmDialog]);
-
-  const handleFinishClick = () => {
-    if (isDirty) {
-      setPendingAction("finish");
-      setShowConfirmDialog(true);
-    } else {
-      onFinish();
-    }
-  };
-
-  const handleSaveClick = () => {
-    if (isDirty) {
-      setPendingAction("save");
-      setShowConfirmDialog(true);
-    }
-  };
-
-  const handleConfirmYes = async () => {
-    if (!pendingAction) return;
-
-    setShowConfirmDialog(false);
-
-    if (pendingAction === "save") {
-      await onSave();
-    } else if (pendingAction === "finish") {
-      onFinish();
-    }
-
-    setPendingAction(null);
-  };
-
-  const handleConfirmNo = () => {
-    setShowConfirmDialog(false);
-    setPendingAction(null);
-    // Return focus to the appropriate button
-    if (pendingAction === "save") {
-      saveButtonRef.current?.focus();
-    } else if (pendingAction === "finish") {
-      finishButtonRef.current?.focus();
-    }
-  };
-
-  const handleBackdropClick = () => {
-    if (isSaving || showConfirmDialog) return;
-    handleFinishClick();
-  };
-
-  const handleConfirmBackdropClick = () => {
-    if (isSaving) return;
-    handleConfirmNo();
-  };
 
   const statusText = isDirty
     ? "Perubahan belum disimpan"

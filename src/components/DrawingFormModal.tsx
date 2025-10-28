@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useState, useEffect } from "react";
 
 interface FormData {
   layerType: string;
@@ -38,12 +38,35 @@ const DrawingFormModal: React.FC<DrawingFormModalProps> = ({
   // Determine if we're in simplified mode (adding to existing layer)
   const isSimplifiedMode = !!targetLayer;
 
+  const validateForm = useCallback((): boolean => {
+    const newErrors: Record<string, string> = {};
+
+    formData.forEach((data, index) => {
+      // In simplified mode, layer type is pre-filled and validated
+      if (!isSimplifiedMode && !data.layerType.trim()) {
+        newErrors[`${index}-layerType`] = "Nama Layer harus diisi";
+      }
+      if (!data.regionName.trim()) {
+        newErrors[`${index}-regionName`] = "Nama Wilayah harus diisi";
+      }
+    });
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  }, [formData, isSimplifiedMode]);
+
+  const handleSave = useCallback(() => {
+    if (validateForm()) {
+      onSave(formData);
+    }
+  }, [formData, onSave, validateForm]);
+
   // Initialize form data when feature count changes
   useEffect(() => {
-    setFormData(
+    setFormData((prevFormData) =>
       Array.from({ length: featureCount }, (_, index) => ({
-        layerType: formData[index]?.layerType || "",
-        regionName: formData[index]?.regionName || "",
+        layerType: prevFormData[index]?.layerType || "",
+        regionName: prevFormData[index]?.regionName || "",
       }))
     );
   }, [featureCount]);
@@ -51,10 +74,10 @@ const DrawingFormModal: React.FC<DrawingFormModalProps> = ({
   // Pre-fill layer type in simplified mode
   useEffect(() => {
     if (isSimplifiedMode && targetLayer) {
-      setFormData(
+      setFormData((prevFormData) =>
         Array.from({ length: featureCount }, (_, index) => ({
           layerType: targetLayer.typeCode || "",
-          regionName: formData[index]?.regionName || "",
+          regionName: prevFormData[index]?.regionName || "",
         }))
       );
     }
@@ -77,47 +100,23 @@ const DrawingFormModal: React.FC<DrawingFormModalProps> = ({
     }
 
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose, isLoading]);
+  }, [isOpen, onClose, isLoading, handleSave]);
 
-  const handleInputChange = (
-    index: number,
-    field: keyof FormData,
-    value: string
-  ) => {
-    const newFormData = [...formData];
-    newFormData[index] = { ...newFormData[index], [field]: value };
-    setFormData(newFormData);
+  const handleInputChange = useCallback(
+    (index: number, field: keyof FormData, value: string) => {
+      const newFormData = [...formData];
+      newFormData[index] = { ...newFormData[index], [field]: value };
+      setFormData(newFormData);
 
-    // Clear error for this field if it exists
-    if (errors[`${index}-${field}`]) {
-      const newErrors = { ...errors };
-      delete newErrors[`${index}-${field}`];
-      setErrors(newErrors);
-    }
-  };
-
-  const validateForm = (): boolean => {
-    const newErrors: Record<string, string> = {};
-
-    formData.forEach((data, index) => {
-      // In simplified mode, layer type is pre-filled and validated
-      if (!isSimplifiedMode && !data.layerType.trim()) {
-        newErrors[`${index}-layerType`] = "Nama Layer harus diisi";
+      // Clear error for this field if it exists
+      if (errors[`${index}-${field}`]) {
+        const newErrors = { ...errors };
+        delete newErrors[`${index}-${field}`];
+        setErrors(newErrors);
       }
-      if (!data.regionName.trim()) {
-        newErrors[`${index}-regionName`] = "Nama Wilayah harus diisi";
-      }
-    });
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleSave = () => {
-    if (validateForm()) {
-      onSave(formData);
-    }
-  };
+    },
+    [formData, errors]
+  );
 
   const handleClose = () => {
     if (!isLoading) {

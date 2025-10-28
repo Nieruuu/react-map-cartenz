@@ -50,8 +50,8 @@ export const testApiAttributes: SpatialFeatureAttribute[] = [
 /**
  * Simulates the attribute flattening logic from the export function
  */
-export function flattenApiAttributes(attributes: SpatialFeatureAttribute[]): Record<string, any> {
-  const flatProps: Record<string, any> = {};
+export function flattenApiAttributes(attributes: SpatialFeatureAttribute[]): Record<string, unknown> {
+  const flatProps: Record<string, unknown> = {};
   
   // Process each attribute from the API response
   attributes.forEach((attr) => {
@@ -125,7 +125,7 @@ export function testExportProcess(): void {
   console.log('Mock feature:', mockFeature);
   
   // Simulate the processing logic from buildFeatureCollectionFromLayer
-  let processedProps: Record<string, any> = { ...mockFeature };
+  let processedProps: Record<string, unknown> = { ...mockFeature };
   
   // Handle _rawAttributes from API features
   if (processedProps._rawAttributes && Array.isArray(processedProps._rawAttributes)) {

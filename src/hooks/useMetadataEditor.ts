@@ -42,7 +42,7 @@ export type UseMetadataEditorReturn = {
     saveChanges: () => Promise<boolean>;
     updateNamaWilayah: (value: string) => void;
     updateIdWilayah: (value: string) => void;
-    updateAttribute: (id: string, field: keyof EditableAttribute, value: any) => void;
+    updateAttribute: (id: string, field: keyof EditableAttribute, value: unknown) => void;
     addAttribute: () => void;
     removeAttribute: (id: string) => void;
     validateAttribute: (id: string) => boolean;
@@ -70,8 +70,9 @@ export function useMetadataEditor(): UseMetadataEditorReturn {
 
   // Clean up debounce timers on unmount
   useEffect(() => {
+    const currentTimers = debounceTimersRef.current;
     return () => {
-      debounceTimersRef.current.forEach(timer => clearTimeout(timer));
+      currentTimers.forEach(timer => clearTimeout(timer));
     };
   }, []);
 
@@ -210,7 +211,7 @@ export function useMetadataEditor(): UseMetadataEditorReturn {
     }));
   }, []);
 
-  const updateAttribute = useCallback((id: string, field: keyof EditableAttribute, value: any) => {
+  const updateAttribute = useCallback((id: string, field: keyof EditableAttribute, value: unknown) => {
     setState(prev => ({
       ...prev,
       editableAttributes: prev.editableAttributes.map(attr =>

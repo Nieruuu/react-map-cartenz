@@ -18,14 +18,14 @@ interface DebugLog {
   timestamp: Date;
   level: "info" | "warn" | "error" | "success";
   message: string;
-  details?: any;
+  details?: unknown;
 }
 
 interface TestResult {
   name: string;
   status: "pending" | "success" | "error";
   message: string;
-  details?: any;
+  details?: unknown;
   duration?: number;
 }
 
@@ -39,7 +39,11 @@ export default function ApiDebugger() {
   >("status");
 
   // Add log entry
-  const addLog = (level: DebugLog["level"], message: string, details?: any) => {
+  const addLog = (
+    level: DebugLog["level"],
+    message: string,
+    details?: unknown
+  ) => {
     const log: DebugLog = {
       id: Math.random().toString(36).substr(2, 9),
       timestamp: new Date(),
@@ -147,10 +151,10 @@ export default function ApiDebugger() {
       tests[0] = {
         ...tests[0],
         status: "error",
-        message: `Authentication check failed: ${error}`,
+        message: `Authentication check failed: ${String(error)}`,
         details: error,
       };
-      addLog("error", "Authentication check error", error);
+      addLog("error", "Authentication check error", String(error));
     }
 
     setTestResults([...tests]);
@@ -183,10 +187,10 @@ export default function ApiDebugger() {
         tests[1] = {
           ...tests[1],
           status: "error",
-          message: `Token validation error: ${error}`,
+          message: `Token validation error: ${String(error)}`,
           details: error,
         };
-        addLog("error", "Token validation error", error);
+        addLog("error", "Token validation error", String(error));
       }
     } else {
       tests[1] = {
@@ -240,10 +244,10 @@ export default function ApiDebugger() {
         tests[2] = {
           ...tests[2],
           status: "error",
-          message: `API connectivity error: ${error}`,
+          message: `API connectivity error: ${String(error)}`,
           details: error,
         };
-        addLog("error", "API connectivity error", error);
+        addLog("error", "API connectivity error", String(error));
       }
     } else {
       tests[2] = {
@@ -283,10 +287,10 @@ export default function ApiDebugger() {
         tests[3] = {
           ...tests[3],
           status: "error",
-          message: `Spatial feature list failed: ${error}`,
+          message: `Spatial feature list failed: ${String(error)}`,
           details: error,
         };
-        addLog("error", "Spatial feature list error", error);
+        addLog("error", "Spatial feature list error", String(error));
       }
     } else {
       tests[3] = {
@@ -299,24 +303,59 @@ export default function ApiDebugger() {
     setTestResults([...tests]);
 
     // Test 5: Data Transformation
-    if (tests[3].status === "success" && tests[3].details?.dataCount > 0) {
+    if (
+      tests[3].status === "success" &&
+      ((tests[3].details as { dataCount?: number })?.dataCount ?? 0) > 0
+    ) {
       try {
         const startTime = Date.now();
         const mockData = {
           id: 1,
+          systemId: 1,
+          type: 1,
+          identifier: "test-identifier",
+          label: "test-label",
           value: "test-uuid",
+          status: 1,
           attribute: [
             {
+              id: 1,
+              dataType: 1,
+              rowIdentifier: 1,
+              groupIdentifier: null,
+              attributeIndex: 0,
               attributeKey: "spatialFeature.refWilayah",
+              attributeLabel: "Ref Wilayah",
               attributeValue: "Test Feature",
+              attributeValueType: 1,
+              status: 1,
             },
             {
+              id: 2,
+              dataType: 1,
+              rowIdentifier: 1,
+              groupIdentifier: null,
+              attributeIndex: 1,
               attributeKey: "spatialFeature.geometry",
+              attributeLabel: "Geometry",
               attributeValue: "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))",
+              attributeValueType: 1,
+              status: 1,
             },
-            { attributeKey: "spatialFeature.type", attributeValue: "20000001" },
+            {
+              id: 3,
+              dataType: 1,
+              rowIdentifier: 1,
+              groupIdentifier: null,
+              attributeIndex: 2,
+              attributeKey: "spatialFeature.type",
+              attributeLabel: "Type",
+              attributeValue: "20000001",
+              attributeValueType: 1,
+              status: 1,
+            },
           ],
-        } as any;
+        };
 
         const transformed = transformSpatialRows([mockData]);
         const validation = validateTransformedFeatures(transformed);
@@ -346,13 +385,13 @@ export default function ApiDebugger() {
             message: "No valid features after transformation",
             details: validation,
           };
-          addLog("error", "Data transformation failed", validation);
+          addLog("error", "Data transformation failed", String(validation));
         }
       } catch (error) {
         tests[4] = {
           ...tests[4],
           status: "error",
-          message: `Data transformation error: ${error}`,
+          message: `Data transformation error: ${String(error)}`,
           details: error,
         };
         addLog("error", "Data transformation error", error);
@@ -406,10 +445,10 @@ export default function ApiDebugger() {
       tests[5] = {
         ...tests[5],
         status: "error",
-        message: `WKT conversion error: ${error}`,
+        message: `WKT conversion error: ${String(error)}`,
         details: error,
       };
-      addLog("error", "WKT conversion error", error);
+      addLog("error", "WKT conversion error", String(error));
     }
 
     setTestResults(tests);
@@ -431,7 +470,7 @@ export default function ApiDebugger() {
       setAuthState(auth.getAuthState());
       addLog("success", "Login successful");
     } catch (error) {
-      addLog("error", "Login failed", error);
+      addLog("error", "Login failed", String(error));
     }
   };
 
@@ -443,7 +482,7 @@ export default function ApiDebugger() {
       setAuthState(null);
       addLog("success", "Logout successful");
     } catch (error) {
-      addLog("error", "Logout failed", error);
+      addLog("error", "Logout failed", String(error));
     }
   };
 
@@ -509,7 +548,9 @@ export default function ApiDebugger() {
           <button
             key={tab.key}
             className={`btn ${activeTab === tab.key ? "primary" : "ghost"}`}
-            onClick={() => setActiveTab(tab.key as any)}
+            onClick={() =>
+              setActiveTab(tab.key as "status" | "tests" | "logs" | "auth")
+            }
             style={{
               borderBottom:
                 activeTab === tab.key ? "2px solid #3b82f6" : "none",
@@ -660,7 +701,7 @@ export default function ApiDebugger() {
                     <div style={{ fontSize: 14, marginBottom: 8 }}>
                       {test.message}
                     </div>
-                    {test.details && (
+                    {test.details != null && (
                       <details>
                         <summary
                           style={{
@@ -681,7 +722,7 @@ export default function ApiDebugger() {
                             overflow: "auto",
                           }}
                         >
-                          {JSON.stringify(test.details, null, 2)}
+                          {JSON.stringify(test.details as any, null, 2)}
                         </pre>
                       </details>
                     )}
@@ -772,7 +813,7 @@ export default function ApiDebugger() {
                   <div style={{ fontSize: 14, marginBottom: 4 }}>
                     {log.message}
                   </div>
-                  {log.details && (
+                  {log.details != null && (
                     <details>
                       <summary
                         style={{
@@ -793,7 +834,7 @@ export default function ApiDebugger() {
                           overflow: "auto",
                         }}
                       >
-                        {JSON.stringify(log.details, null, 2)}
+                        {JSON.stringify(log.details as any, null, 2)}
                       </pre>
                     </details>
                   )}

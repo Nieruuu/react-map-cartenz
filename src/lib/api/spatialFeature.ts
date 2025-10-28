@@ -131,8 +131,8 @@ export async function getSpatialFeatureById(
 export function extractAttribute(
   feature: SpatialFeature,
   attributeKey: string,
-  defaultValue: any = null
-): any {
+  defaultValue: string | null = null
+): string | null {
   if (!feature.attribute || !Array.isArray(feature.attribute)) {
     return defaultValue;
   }

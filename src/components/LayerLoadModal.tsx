@@ -14,15 +14,18 @@ type RegistryItem = {
   key: string;
   name: string;
   kind: Kind;
-  fc: any;
+  fc: GeoJSON.FeatureCollection;
   ts: number;
   count: number;
-  meta?: Record<string, any>;
+  meta?: Record<string, unknown>;
 };
 
 const REGKEY = "__taxmap_dataset_registry__";
 function ensureRegistry(): Map<string, RegistryItem> {
-  const g: any = window as any;
+  const g: Record<string, unknown> = window as unknown as Record<
+    string,
+    unknown
+  >;
   if (!g[REGKEY] || !(g[REGKEY] instanceof Map)) g[REGKEY] = new Map();
   return g[REGKEY] as Map<string, RegistryItem>;
 }
@@ -126,78 +129,10 @@ export default function LayerLoadModal({
 
     refresh();
     const onUpd = () => refresh();
-    window.addEventListener("datasets-updated", onUpd as any);
-    return () => window.removeEventListener("datasets-updated", onUpd as any);
+    window.addEventListener("datasets-updated", onUpd);
+    return () => window.removeEventListener("datasets-updated", onUpd);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
-
-  // Check authentication status when modal opens
-  useEffect(() => {
-    const authState = auth.getAuthState();
-    setIsAuthenticated(authState.isAuthenticated);
-  }, [open]);
-
-  // Load feature groups when tab switches to API and authenticated
-  useEffect(() => {
-    if (
-      tab === "api" &&
-      isAuthenticated &&
-      Object.keys(featureGroups).length === 0 &&
-      open // Only load when modal is open
-    ) {
-      loadAvailableFeatureGroups();
-    }
-  }, [tab, isAuthenticated, open]);
-
-  // Monitor authentication state changes
-  useEffect(() => {
-    const checkAuthStatus = () => {
-      const authState = auth.getAuthState();
-      setIsAuthenticated(authState.isAuthenticated);
-    };
-
-    // Check auth status every 30 seconds to detect token expiration
-    const authCheckInterval = setInterval(checkAuthStatus, 30000);
-
-    return () => clearInterval(authCheckInterval);
-  }, []);
-
-  const hasData = items.length > 0;
-
-  const subtitle = useMemo(() => {
-    if (!hasData) return "Belum ada dataset yang di-import.";
-    const it = items.find((x) => x.key === selected);
-    if (!it) return "";
-    const kindLabel =
-      it.kind === "kelurahan"
-        ? "Kelurahan"
-        : it.kind === "kecamatan"
-        ? "Kecamatan"
-        : it.kind === "kabupaten"
-        ? "Kabupaten"
-        : "Custom";
-    return `${kindLabel} • ${it.count} fitur`;
-  }, [items, selected, hasData]);
-
-  const onLoad = () => {
-    if (!selected) return;
-    const reg = ensureRegistry();
-    const item = reg.get(selected);
-    if (!item) return;
-
-    window.dispatchEvent(
-      new CustomEvent("load-imported-dataset", {
-        detail: {
-          key: selected,
-          fc: item.fc,
-          name: item.name,
-          kind: item.kind,
-          meta: item.meta,
-        },
-      })
-    );
-    onClose();
-  };
 
   // API Feature Group loading functions
   const loadAvailableFeatureGroups = useCallback(async () => {
@@ -305,7 +240,75 @@ export default function LayerLoadModal({
         });
       }
     }
-  }, [isAuthenticated]);
+  }, []);
+
+  // Check authentication status when modal opens
+  useEffect(() => {
+    const authState = auth.getAuthState();
+    setIsAuthenticated(authState.isAuthenticated);
+  }, [open]);
+
+  // Load feature groups when tab switches to API and authenticated
+  useEffect(() => {
+    if (
+      tab === "api" &&
+      isAuthenticated &&
+      Object.keys(featureGroups).length === 0 &&
+      open // Only load when modal is open
+    ) {
+      loadAvailableFeatureGroups();
+    }
+  }, [tab, isAuthenticated, open, featureGroups, loadAvailableFeatureGroups]);
+
+  // Monitor authentication state changes
+  useEffect(() => {
+    const checkAuthStatus = () => {
+      const authState = auth.getAuthState();
+      setIsAuthenticated(authState.isAuthenticated);
+    };
+
+    // Check auth status every 30 seconds to detect token expiration
+    const authCheckInterval = setInterval(checkAuthStatus, 30000);
+
+    return () => clearInterval(authCheckInterval);
+  }, []);
+
+  const hasData = items.length > 0;
+
+  const subtitle = useMemo(() => {
+    if (!hasData) return "Belum ada dataset yang di-import.";
+    const it = items.find((x) => x.key === selected);
+    if (!it) return "";
+    const kindLabel =
+      it.kind === "kelurahan"
+        ? "Kelurahan"
+        : it.kind === "kecamatan"
+        ? "Kecamatan"
+        : it.kind === "kabupaten"
+        ? "Kabupaten"
+        : "Custom";
+    return `${kindLabel} • ${it.count} fitur`;
+  }, [items, selected, hasData]);
+
+  const onLoad = () => {
+    if (!selected) return;
+    const reg = ensureRegistry();
+    const item = reg.get(selected);
+    if (!item) return;
+
+    window.dispatchEvent(
+      new CustomEvent("load-imported-dataset", {
+        detail: {
+          key: selected,
+          fc: item.fc,
+          name: item.name,
+          kind: item.kind,
+          meta: item.meta,
+        },
+      })
+    );
+    onClose();
+  };
 
   // Toggle group selection
   const toggleGroupSelection = (typeCode: string) => {

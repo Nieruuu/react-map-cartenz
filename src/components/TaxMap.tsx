@@ -28,7 +28,7 @@ import Polygon from "ol/geom/Polygon";
 import MultiPolygon from "ol/geom/MultiPolygon";
 import Modify from "ol/interaction/Modify";
 import Select from "ol/interaction/Select";
-import shp from "shpjs";
+// import shp from "shpjs";
 
 import { useMapStore } from "../hooks/useMapStore";
 import { styleFromCfg, useLayersStore } from "../hooks/useLayersStore";
@@ -39,7 +39,7 @@ import type {
   SpatialFeatureAttribute,
 } from "../lib/api/spatialFeature";
 
-const ADMIN_SRC = "/data/5103.zip";
+// const ADMIN_SRC = "/data/5103.zip";
 const INITIAL_CENTER = fromLonLat([115.178, -8.5]);
 const INITIAL_ZOOM = 10;
 
@@ -474,17 +474,6 @@ function hexToRgba(hex: string, alpha = 1) {
   const g = (n >> 8) & 255;
   const b = n & 255;
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-function pickFeatureCollection(data: any) {
-  if (!data) return null;
-  if (data.type === "FeatureCollection") return data;
-  if (typeof data === "object") {
-    for (const k of Object.keys(data)) {
-      const v = (data as any)[k];
-      if (v && v.type === "FeatureCollection") return v;
-    }
-  }
-  return null;
 }
 
 function assignFeatureMetadata(features: Feature<Geometry>[]) {
@@ -1427,7 +1416,7 @@ export default function TaxMap() {
           .find((f: any) => String(f.get("id") || "") === String(id));
         if (!ft) continue;
         const raw = ft.getProperties?.() || {};
-        const { geometry, geom, the_geom, _geom, ...rest } = raw as any;
+        const { ...rest } = raw as any;
         props = rest;
         foundFeature = ft;
         foundLayerId = le.id;
@@ -1787,7 +1776,9 @@ export default function TaxMap() {
             if (/^(geometry|geom|the_geom|_geom)$/i.test(k)) return;
             try {
               (ft as any).unset?.(k, true);
-            } catch {}
+            } catch {
+              // Handle error silently
+            }
           });
 
           // bila user mengubah kode/nama via alias resmi, ikutkan ke id/name
@@ -2352,7 +2343,6 @@ export default function TaxMap() {
         namaWilayah,
         idWilayah,
         rawAttributes,
-        completeFeature,
         isAutoUpdate,
       } = (event as CustomEvent<any>).detail || {};
 
@@ -2497,6 +2487,7 @@ export default function TaxMap() {
     );
 
     return () => {
+      const hs = hoverStateRef.current;
       window.removeEventListener("goto-coords", onGoto as any);
       window.removeEventListener(
         "load-imported-dataset",
@@ -2537,7 +2528,6 @@ export default function TaxMap() {
         handleIntelligentAutoReload as any
       );
 
-      const hs = hoverStateRef.current;
       if (hs.rafId) cancelAnimationFrame(hs.rafId);
 
       map.setTarget(undefined as any);

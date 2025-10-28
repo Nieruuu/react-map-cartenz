@@ -14,14 +14,21 @@ tax-map-react/
 ├── src/
 │   ├── components/              # React components
 │   │   ├── ApiLoadPanel.tsx     # API data loading panel with filtering
+│   │   ├── DrawingFormModal.tsx # Form for entering drawing metadata
+│   │   ├── DrawingToolbar.tsx   # Toolbar for drawing operations
 │   │   ├── ExportModal.tsx      # Data export interface
 │   │   ├── FocusCard.tsx        # Feature focus display with metadata editing
 │   │   ├── FooterBars.tsx       # Bottom UI bar
 │   │   ├── LayerLoadModal.tsx   # Enhanced layer loading interface
 │   │   ├── LeftDock.tsx         # Left side panel
+│   │   ├── LoadingScreen.tsx    # Global loading screen with progress
 │   │   ├── RightDock.tsx        # Right side panel
 │   │   ├── TaxMap.tsx           # Main map component
 │   │   ├── Topbar.tsx           # Top navigation bar
+│   │   ├── TranslateFeatureModal.tsx # Feature translation interface
+│   │   ├── TranslateLayerModal.tsx   # Layer translation interface
+│   │   ├── VertexEditingModal.tsx    # Vertex editing interface
+│   │   ├── VertexEditingToolbar.tsx  # Toolbar for vertex editing operations
 │   │   └── api/                 # API-specific components
 │   │       └── SmartGovLoader.tsx # Streamlined API loader UI
   
@@ -33,7 +40,9 @@ tax-map-react/
   
 │   ├── hooks/                   # Custom React hooks
 │   │   ├── useLayersStore.ts    # Layer management state
-│   │   └── useMapStore.ts       # Map state management
+│   │   ├── useLoadingState.ts   # Global loading state management
+│   │   ├── useMapStore.ts       # Map state management
+│   │   └── useMetadataEditor.ts # Metadata editing functionality
   
 │   ├── lib/                     # Core utilities and API
 │   │   ├── api/                 # API layer
@@ -45,7 +54,8 @@ tax-map-react/
 │   │   │   └── transformers.ts  # Data transformation utilities
 │   │   ├── geo/                 # Geospatial utilities
 │   │   │   └── simpleWKTConverter.ts # Simplified WKT to OpenLayers conversion
-│   │   └── config.ts            # Configuration constants
+│   │   ├── config.ts            # Configuration constants
+│   │   └── exportTest.ts        # Export functionality testing utilities
   
 │   ├── styles/                  # CSS styles
 │   │   └── ui.css
@@ -60,27 +70,18 @@ tax-map-react/
 │   ├── main.tsx                 # Application entry point
 │   └── vite-env.d.ts            # Vite environment types
 
-├── tmp_zip/                     # Temporary zip extraction folder
-│   └── layers/
-
-├── .env                         # Environment variables configuration
-├── index.html                   # HTML template
-├── package.json                 # Dependencies and scripts
-├── tsconfig.json                # TypeScript configuration
-├── tsconfig.app.json            # App-specific TypeScript config
-├── tsconfig.node.json           # Node-specific TypeScript config
-├── vite.config.ts               # Vite build configuration with environment support
+├── .env.example                 # Environment variables template
+├── .gitignore                   # Git ignore file
 ├── eslint.config.js             # ESLint configuration
-├── .gitignore                   # Git ignore rules
-├── structure.txt                # Project structure notes
+├── index.html                   # HTML entry point
+├── package.json                 # NPM package configuration
+├── package-lock.json            # NPM lock file
+├── tsconfig.app.json            # TypeScript app configuration
+├── tsconfig.json                # TypeScript base configuration
+├── tsconfig.node.json           # TypeScript Node configuration
+├── vite.config.ts               # Vite configuration with environment support
 ├── PROJECT_CONTEXT.md           # Project context documentation
-├── PROJECT_STRUCTURE.md         # This documentation file
-├── API_DEBUGGING_GUIDE.md       # API debugging guide
-├── API_IMPLEMENTATION_GUIDE.md  # API implementation guide
-├── SPATIAL_FEATURE_API_IMPLEMENTATION.md # Spatial feature API docs
-├── LAYER_LOAD_MODAL_ENHANCEMENT.md # Layer loading enhancements
-├── LAYER_LOAD_MODAL_FIXES.md # Layer loading fixes
-└── WKT_CONVERTER_ANALYSIS.md # WKT converter analysis
+└── PROJECT_STRUCTURE.md         # This documentation file
 ```
 
 ## API Layer Architecture
@@ -134,13 +135,21 @@ App.tsx
     │   └── FooterBars.tsx
     │
     ├── Modal Components
+    │   ├── DrawingFormModal.tsx
     │   ├── ExportModal.tsx
+    │   ├── FocusCard.tsx (With metadata editing)
     │   ├── LayerLoadModal.tsx (Enhanced with hierarchical grouping)
-    │   └── FocusCard.tsx (With metadata editing)
+    │   ├── TranslateFeatureModal.tsx
+    │   ├── TranslateLayerModal.tsx
+    │   └── VertexEditingModal.tsx
     │
     ├── API Components
     │   ├── ApiLoadPanel.tsx
     │   └── api/SmartGovLoader.tsx (Simplified interface)
+    │
+    ├── Toolbar Components
+    │   ├── DrawingToolbar.tsx
+    │   └── VertexEditingToolbar.tsx
     │
     └── Dev Components (DEV only)
         └── ApiDebugger.tsx (Enhanced debugging)
@@ -358,44 +367,13 @@ VITE_ENABLE_API_DEBUGGING=false
 
 ## Documentation Guides
 
-### API_DEBUGGING_GUIDE.md
-- Troubleshooting authentication issues
-- Network request inspection
-- Common error solutions
-- Postman comparison guide
-- Implementation details
-
-### API_IMPLEMENTATION_GUIDE.md
-- Step-by-step implementation
-- Error troubleshooting by ID
-- Integration with components
-- Best practices
-- Performance monitoring
-
-### SPATIAL_FEATURE_API_IMPLEMENTATION.md
-- Spatial Feature API specification
-- Response structure documentation
-- Layer grouping logic
-- Attribute handling details
-
-### LAYER_LOAD_MODAL_ENHANCEMENT.md
-- Hierarchical feature grouping
-- UI/UX improvements
-- Authentication integration
-- Performance optimizations
-
-### WKT_CONVERTER_ANALYSIS.md
-- WKT converter simplification analysis
-- Performance improvements
-- API data format considerations
-- Migration from complex to simple converter
-
 ### PROJECT_CONTEXT.md
 - Complete project overview
 - Technology stack details
 - API architecture explanation
 - Development setup instructions
 - Recent major updates
+- Note: Other documentation files have been removed as part of project cleanup
 
 ## File Naming Conventions
 

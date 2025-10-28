@@ -57,13 +57,13 @@ export default function FocusCard() {
   );
 
   const syncFocusWithProps = useCallback(
-    (props: Record<string, any> | undefined, resolvedLayerId: string) => {
+    (props: Record<string, unknown> | undefined, resolvedLayerId: string) => {
       if (!props || !focus || typeof focus !== "object") {
         return;
       }
 
-      let updatedName = (focus as any)?.name || "";
-      let updatedId = (focus as any)?.id || "";
+      let updatedName = (focus as { name?: string; id?: string })?.name || "";
+      let updatedId = (focus as { name?: string; id?: string })?.id || "";
 
       if (props.id !== undefined) {
         updatedId = String(props.id);
@@ -71,10 +71,13 @@ export default function FocusCard() {
 
       if (props._rawAttributes && Array.isArray(props._rawAttributes)) {
         const refWilayahAttr = props._rawAttributes.find(
-          (attr: any) => attr.attributeKey === "spatialFeature.refWilayah"
+          (attr: { attributeKey: string }) =>
+            attr.attributeKey === "spatialFeature.refWilayah"
         );
         if (refWilayahAttr) {
-          updatedName = refWilayahAttr.attributeValue || updatedName;
+          updatedName =
+            (refWilayahAttr as { attributeValue?: string })?.attributeValue ||
+            updatedName;
           console.log(
             "FocusCard: Updated name from spatialFeature.refWilayah:",
             updatedName
@@ -90,19 +93,28 @@ export default function FocusCard() {
         );
       }
 
-      const updatedFocus = {
-        ...(focus as any),
+      const updatedFocus: Record<string, unknown> = {
+        ...(focus as Record<string, unknown>),
         name: updatedName,
         id: updatedId,
         layerId: resolvedLayerId,
-        _rawAttributes: props._rawAttributes || (focus as any)._rawAttributes,
-        ...(props.geometry && { geom: props.geometry }),
-        ...(props.lon && { lon: props.lon }),
-        ...(props.lat && { lat: props.lat }),
+        _rawAttributes:
+          props._rawAttributes ||
+          (focus as Record<string, unknown>)._rawAttributes,
       };
 
+      if (props.geometry) {
+        updatedFocus.geom = props.geometry as unknown;
+      }
+      if (props.lon) {
+        updatedFocus.lon = props.lon as number;
+      }
+      if (props.lat) {
+        updatedFocus.lat = props.lat as number;
+      }
+
       console.log("FocusCard: Applying fresh props to focus", {
-        oldName: (focus as any)?.name,
+        oldName: (focus as { name?: string })?.name,
         newName: updatedName,
         layerId: resolvedLayerId,
         hasNewGeometry: !!props.geometry,
@@ -159,19 +171,29 @@ export default function FocusCard() {
     // Listen for layer reload completion to refresh the main FocusCard display
     const onLayerReloadedForFocusRefresh = (ev: Event) => {
       const { originalLayerId, newLayerId, featureId, props } =
-        (ev as CustomEvent<any>).detail || {};
+        (
+          ev as CustomEvent<{
+            originalLayerId?: string;
+            newLayerId?: string;
+            featureId?: string;
+            props?: Record<string, unknown>;
+          }>
+        ).detail || {};
 
       console.log("FocusCard: onLayerReloadedForFocusRefresh event received", {
         originalLayerId,
         newLayerId,
         featureId,
-        currentFocusId: (focus as any)?.id,
-        currentFocusLayerId: (focus as any)?.layerId,
+        currentFocusId: (focus as { id?: string; layerId?: string })?.id,
+        currentFocusLayerId: (focus as { id?: string; layerId?: string })
+          ?.layerId,
       });
 
-      const currentFocusId = String((focus as any)?.id ?? "");
+      const currentFocusId = String((focus as { id?: string })?.id ?? "");
       const eventFeatureId = String(featureId ?? "");
-      const currentFocusLayerId = String((focus as any)?.layerId ?? "");
+      const currentFocusLayerId = String(
+        (focus as { layerId?: string })?.layerId ?? ""
+      );
       const originalLayerIdStr = String(originalLayerId ?? "");
       const newLayerIdStr = String(newLayerId ?? "");
       const resolvedLayerId =
@@ -211,7 +233,13 @@ export default function FocusCard() {
               id: rid,
               layerId: rlayer,
               props,
-            } = (ev as CustomEvent<any>).detail || {};
+            } = (
+              ev as CustomEvent<{
+                id?: string;
+                layerId?: string;
+                props?: Record<string, unknown>;
+              }>
+            ).detail || {};
 
             if (
               String(rid ?? "") === eventFeatureId &&
@@ -223,7 +251,7 @@ export default function FocusCard() {
                 hasRawAttributes: !!(props && props._rawAttributes),
               });
 
-              const p: Record<string, any> = props || {};
+              const p: Record<string, unknown> = props || {};
 
               // Extract the updated name from the fresh data
               syncFocusWithProps(p, resolvedLayerId);
@@ -233,7 +261,7 @@ export default function FocusCard() {
           // Set up one-time listener for the response
           window.addEventListener(
             "feature-props-response",
-            onPropsResponse as any,
+            onPropsResponse as EventListener,
             {
               once: true,
             }
@@ -296,15 +324,25 @@ export default function FocusCard() {
     editorInitializedRef.current = false;
 
     // Request feature properties to get the full feature data
-    const openIdRef = { current: (focus as any)?.id || null };
-    const openLayerIdRef = { current: (focus as any).layerId || null };
+    const openIdRef = {
+      current: (focus as { id?: string; layerId?: string })?.id || null,
+    };
+    const openLayerIdRef = {
+      current: (focus as { id?: string; layerId?: string }).layerId || null,
+    };
 
     const onResp = (ev: Event) => {
       const {
         id: rid,
         layerId: rlayer,
         props,
-      } = (ev as CustomEvent<any>).detail || {};
+      } = (
+        ev as CustomEvent<{
+          id?: string;
+          layerId?: string;
+          props?: Record<string, unknown>;
+        }>
+      ).detail || {};
       if (rid !== openIdRef.current || rlayer !== openLayerIdRef.current)
         return;
 
@@ -314,8 +352,8 @@ export default function FocusCard() {
         hasRawAttributes: !!(props && props._rawAttributes),
       });
 
-      const p: Record<string, any> = props || {};
-      const featureIdNumeric = Number((focus as any)?.id || 0);
+      const p: Record<string, unknown> = props || {};
+      const featureIdNumeric = Number((focus as { id?: string })?.id || 0);
 
       const normalizeAttribute = (
         attr: Partial<SpatialFeatureAttribute> & {
@@ -358,19 +396,21 @@ export default function FocusCard() {
           "FocusCard: Processing _rawAttributes",
           p._rawAttributes.length
         );
-        attributeList = p._rawAttributes.map((attr: any, idx: number) => {
-          if (
-            attr.attributeKey === "spatialFeature.refWilayah" &&
-            attr.attributeValue
-          ) {
-            namaWilayah = attr.attributeValue;
-            console.log(
-              "FocusCard: Extracted namaWilayah from spatialFeature.refWilayah:",
-              namaWilayah
-            );
+        attributeList = p._rawAttributes.map(
+          (attr: SpatialFeatureAttribute, idx: number) => {
+            if (
+              attr.attributeKey === "spatialFeature.refWilayah" &&
+              attr.attributeValue
+            ) {
+              namaWilayah = attr.attributeValue;
+              console.log(
+                "FocusCard: Extracted namaWilayah from spatialFeature.refWilayah:",
+                namaWilayah
+              );
+            }
+            return normalizeAttribute(attr, idx);
           }
-          return normalizeAttribute(attr, idx);
-        });
+        );
       } else {
         // Build minimal attribute structure when raw attributes are not available
         const supplementalAttributes: Array<
@@ -416,10 +456,10 @@ export default function FocusCard() {
       }
 
       // Extract ID wilayah from id field (not uuid/value field)
-      idWilayah = p.id || String((focus as any)?.id || "");
+      idWilayah = String(p.id) || String((focus as { id?: string })?.id || "");
 
       console.log("FocusCard: Creating SpatialFeature with data", {
-        id: (focus as any)?.id || 0,
+        id: (focus as { id?: string })?.id || 0,
         namaWilayah,
         idWilayah,
         attributeCount: attributeList.length,
@@ -427,7 +467,7 @@ export default function FocusCard() {
 
       // Create a SpatialFeature object from the focus data
       const spatialFeature: SpatialFeature = {
-        id: (focus as any)?.id || 0,
+        id: Number((focus as { id?: string })?.id || 0),
         systemId: 0,
         type: 0,
         identifier: "",
@@ -456,9 +496,11 @@ export default function FocusCard() {
       targetFeatureId: string | number | null | undefined = openIdRef.current
     ) => {
       const resolvedLayerId =
-        targetLayerId ?? (focus as any)?.layerId ?? openLayerIdRef.current;
+        targetLayerId ??
+        (focus as { layerId?: string })?.layerId ??
+        openLayerIdRef.current;
       const resolvedFeatureId =
-        targetFeatureId ?? (focus as any)?.id ?? openIdRef.current;
+        targetFeatureId ?? (focus as { id?: string })?.id ?? openIdRef.current;
 
       if (
         resolvedLayerId === null ||
@@ -469,14 +511,21 @@ export default function FocusCard() {
         return;
       }
 
-      openLayerIdRef.current = resolvedLayerId;
-      openIdRef.current = resolvedFeatureId;
+      openLayerIdRef.current = String(resolvedLayerId);
+      openIdRef.current = String(resolvedFeatureId);
 
       // Ensure the next response updates the editor with fresh data
-      window.removeEventListener("feature-props-response", onResp as any);
-      window.addEventListener("feature-props-response", onResp as any, {
-        once: true,
-      });
+      window.removeEventListener(
+        "feature-props-response",
+        onResp as EventListener
+      );
+      window.addEventListener(
+        "feature-props-response",
+        onResp as EventListener,
+        {
+          once: true,
+        }
+      );
 
       window.dispatchEvent(
         new CustomEvent("request-feature-props", {
@@ -494,7 +543,16 @@ export default function FocusCard() {
         updatedProps,
         updatedSpatialFeature,
         updatedRawAttributes,
-      } = (ev as CustomEvent<any>).detail || {};
+      } = (
+        ev as CustomEvent<{
+          id?: string;
+          layerId?: string;
+          reloadLayer?: boolean;
+          updatedProps?: Record<string, unknown>;
+          updatedSpatialFeature?: SpatialFeature;
+          updatedRawAttributes?: SpatialFeatureAttribute[];
+        }>
+      ).detail || {};
 
       if (rid !== openIdRef.current || rlayer !== openLayerIdRef.current)
         return;
@@ -511,7 +569,10 @@ export default function FocusCard() {
       setToast({ type: "success", msg: "Metadata berhasil disimpan." });
 
       const resolvedLayerIdStr = String(
-        rlayer ?? openLayerIdRef.current ?? (focus as any)?.layerId ?? ""
+        rlayer ??
+          openLayerIdRef.current ??
+          (focus as { layerId?: string })?.layerId ??
+          ""
       );
 
       const normalizedAttributes: SpatialFeatureAttribute[] | undefined =
@@ -574,7 +635,7 @@ export default function FocusCard() {
               name:
                 normalizedAttributes.find(
                   (attr) => attr.attributeKey === "spatialFeature.refWilayah"
-                )?.attributeValue || (focus as any)?.name,
+                )?.attributeValue || (focus as { name?: string })?.name,
               _rawAttributes: normalizedAttributes,
             }
           : undefined);
@@ -599,7 +660,14 @@ export default function FocusCard() {
     // Listen for layer reload completion to refresh focus data
     const onLayerReloaded = (ev: Event) => {
       const { originalLayerId, newLayerId, featureId, props } =
-        (ev as CustomEvent<any>).detail || {};
+        (
+          ev as CustomEvent<{
+            originalLayerId?: string;
+            newLayerId?: string;
+            featureId?: string;
+            props?: Record<string, unknown>;
+          }>
+        ).detail || {};
 
       console.log("FocusCard: onLayerReloaded event received", {
         originalLayerId,
@@ -642,18 +710,25 @@ export default function FocusCard() {
         id: rid,
         layerId: rlayer,
         error,
-      } = (ev as CustomEvent<any>).detail || {};
+      } = (ev as CustomEvent<{ id?: string; layerId?: string; error?: string }>)
+        .detail || {};
       if (rid !== openIdRef.current || rlayer !== openLayerIdRef.current)
         return;
 
       setToast({ type: "error", msg: `Gagal menyimpan: ${error}` });
     };
 
-    window.addEventListener("feature-props-applied", onPropsApplied as any);
-    window.addEventListener("feature-props-error", onPropsError as any);
+    window.addEventListener(
+      "feature-props-applied",
+      onPropsApplied as EventListener
+    );
+    window.addEventListener(
+      "feature-props-error",
+      onPropsError as EventListener
+    );
     window.addEventListener(
       "layer-reloaded-for-focus-refresh",
-      onLayerReloaded as any
+      onLayerReloaded as EventListener
     );
 
     requestFeatureProps();
@@ -662,14 +737,14 @@ export default function FocusCard() {
     setTimeout(() => {
       // If no response, start editing with basic data
       if (!editorInitializedRef.current) {
-        const namaWilayah = String((focus as any)?.name || "");
+        const namaWilayah = String((focus as { name?: string })?.name || "");
         const buildFallbackAttributes = (
           nama: string
         ): SpatialFeatureAttribute[] => [
           {
             id: Number(`${Date.now()}0`),
             dataType: 1,
-            rowIdentifier: Number((focus as any)?.id || 0),
+            rowIdentifier: Number((focus as { id?: string })?.id || 0),
             groupIdentifier: null,
             attributeIndex: 0,
             attributeKey: "spatialFeature.refWilayah",
@@ -681,7 +756,7 @@ export default function FocusCard() {
         ];
 
         const spatialFeature: SpatialFeature = {
-          id: (focus as any)?.id || 0,
+          id: Number((focus as { id?: string })?.id || 0),
           systemId: 0,
           type: 0,
           identifier: "",
@@ -703,15 +778,21 @@ export default function FocusCard() {
 
     // Clean up event listeners when component unmounts or editing ends
     return () => {
-      window.removeEventListener("feature-props-response", onResp as any);
+      window.removeEventListener(
+        "feature-props-response",
+        onResp as EventListener
+      );
       window.removeEventListener(
         "feature-props-applied",
-        onPropsApplied as any
+        onPropsApplied as EventListener
       );
-      window.removeEventListener("feature-props-error", onPropsError as any);
+      window.removeEventListener(
+        "feature-props-error",
+        onPropsError as EventListener
+      );
       window.removeEventListener(
         "layer-reloaded-for-focus-refresh",
-        onLayerReloaded as any
+        onLayerReloaded as EventListener
       );
     };
   };
@@ -728,20 +809,23 @@ export default function FocusCard() {
       // For API-loaded features, the save is handled by the TaxMap component
       // For local features, use the direct save method
       const isApiFeature =
-        (focus as any)?._rawAttributes &&
-        Array.isArray((focus as any)._rawAttributes);
+        (focus as { _rawAttributes?: unknown[] })?._rawAttributes &&
+        Array.isArray((focus as { _rawAttributes?: unknown[] })._rawAttributes);
 
       if (isApiFeature) {
         // Prepare updates and immediately update the focus
-        const updates: Record<string, any> = {};
+        const updates: Record<string, unknown> = {};
         const deletes: string[] = [];
 
         // Create the updated attributes array preserving all metadata
         const updatedAttributes = metadataEditor.state.editableAttributes.map(
           (attr, idx) => {
             // Get original attribute if it exists
-            const originalAttr = (focus as any)?._rawAttributes?.find(
-              (raw: any) => raw.attributeKey === attr.attributeKey
+            const originalAttr = (
+              focus as { _rawAttributes?: SpatialFeatureAttribute[] }
+            )?._rawAttributes?.find(
+              (raw: SpatialFeatureAttribute) =>
+                raw.attributeKey === attr.attributeKey
             );
 
             // Preserve all metadata from original attribute or create new complete attribute
@@ -749,7 +833,9 @@ export default function FocusCard() {
               id: originalAttr?.id || Number(`${Date.now()}${idx}`),
               dataType: originalAttr?.dataType ?? 1,
               rowIdentifier:
-                originalAttr?.rowIdentifier ?? (focus as any)?.id ?? 0,
+                originalAttr?.rowIdentifier ??
+                (focus as { id?: string })?.id ??
+                0,
               groupIdentifier: originalAttr?.groupIdentifier ?? null,
               attributeIndex: originalAttr?.attributeIndex ?? idx,
               attributeKey: attr.attributeKey,
@@ -765,7 +851,7 @@ export default function FocusCard() {
         const refWilayahAttr = {
           id: Number(`${Date.now()}${updatedAttributes.length}`),
           dataType: 1,
-          rowIdentifier: (focus as any)?.id ?? 0,
+          rowIdentifier: (focus as { id?: string })?.id ?? 0,
           groupIdentifier: null,
           attributeIndex: updatedAttributes.length,
           attributeKey: "spatialFeature.refWilayah",
@@ -780,8 +866,11 @@ export default function FocusCard() {
           refWilayahAttr,
           ...updatedAttributes,
           // Keep system attributes that weren't edited
-          ...((focus as any)?._rawAttributes || []).filter(
-            (attr: any) =>
+          ...(
+            (focus as { _rawAttributes?: SpatialFeatureAttribute[] })
+              ?._rawAttributes || []
+          ).filter(
+            (attr: SpatialFeatureAttribute) =>
               attr.attributeKey.startsWith("spatialFeature.") &&
               attr.attributeKey !== "spatialFeature.refWilayah" &&
               !updatedAttributes.some(
@@ -792,7 +881,7 @@ export default function FocusCard() {
 
         // Immediately update the focus with new attributes
         const updatedFocus = {
-          ...(focus as any),
+          ...(focus as Record<string, unknown>),
           name: metadataEditor.state.namaWilayah,
           _rawAttributes: allAttributes,
         };
@@ -814,7 +903,7 @@ export default function FocusCard() {
         metadataEditor.state.editableAttributes.forEach((attr) => {
           const originalAttr =
             metadataEditor.state.originalFeature?.attribute?.find(
-              (orig: any) =>
+              (orig: SpatialFeatureAttribute) =>
                 orig.id === parseInt(attr.id) ||
                 orig.attributeKey === `spatialFeature.${attr.attributeKey}`
             );
@@ -836,8 +925,8 @@ export default function FocusCard() {
         console.log(
           "FocusCard: Dispatching apply-feature-props event with reloadLayer=true",
           {
-            id: (focus as any)?.id,
-            layerId: (focus as any).layerId,
+            id: (focus as { id?: string; layerId?: string })?.id,
+            layerId: (focus as { id?: string; layerId?: string }).layerId,
             updates,
             deletes,
             reloadLayer: true,
@@ -846,8 +935,8 @@ export default function FocusCard() {
         window.dispatchEvent(
           new CustomEvent("apply-feature-props", {
             detail: {
-              id: (focus as any)?.id,
-              layerId: (focus as any).layerId,
+              id: (focus as { id?: string; layerId?: string })?.id,
+              layerId: (focus as { id?: string; layerId?: string }).layerId,
               updates,
               deletes,
               reloadLayer: true, // Request layer reload after save
@@ -883,7 +972,8 @@ export default function FocusCard() {
 
   // Mini preview, posisikan shape di tengah (pakai offset centering)
   const renderMiniPreview = () => {
-    const g = (focus as any)?.geom;
+    const g = (focus as { geom?: { type: string; coordinates: unknown[] } })
+      ?.geom;
     if (!g) {
       return (
         <div className="mini-preview-placeholder">
@@ -896,13 +986,17 @@ export default function FocusCard() {
     }
     try {
       let ringLonLat: number[][] = [];
-      if (g.type === "Polygon") ringLonLat = g.coordinates[0];
-      else if (g.type === "MultiPolygon") {
+      if (g.type === "Polygon") {
+        const coords = g.coordinates as unknown[][];
+        ringLonLat = coords[0] as number[][];
+      } else if (g.type === "MultiPolygon") {
         // ambil polygon terluas agar preview proporsional
-        let largest: number[][] = g.coordinates[0][0];
+        const multiCoords = g.coordinates as unknown[][];
+        let largest: number[][] = [];
         let maxArea = 0;
-        g.coordinates.forEach((poly: any) => {
-          const coords = poly[0];
+        multiCoords.forEach((poly: unknown) => {
+          const polyArray = poly as unknown[][];
+          const coords = polyArray[0] as number[][];
           const c3857 = coords.map(([lo, la]: number[]) =>
             fromLonLat([lo, la])
           );
@@ -957,12 +1051,6 @@ export default function FocusCard() {
         .map(([x, y]) => `${nx(x)} ${ny(y)}`)
         .join(" L ")} Z`;
 
-      // centroid sederhana untuk titik merah
-      const cx0 = xs.reduce((a, b) => a + b, 0) / xs.length;
-      const cy0 = ys.reduce((a, b) => a + b, 0) / ys.length;
-      const cx = nx(cx0);
-      const cy = ny(cy0);
-
       return (
         <div className="mini-preview-container">
           <svg width={svgWidth} height={svgHeight} className="mini-preview-svg">
@@ -1015,17 +1103,8 @@ export default function FocusCard() {
 
   if (!hasFocus) return <div style={{ display: "none" }} />;
 
-  const { id, name, lon, lat } = (focus as any) || {};
-
-  // Debug logging to understand ID display issue
-  console.log(`[DEBUG] FocusCard rendering with focus data:`, {
-    focus,
-    id,
-    idType: typeof id,
-    idValue: String(id),
-    name,
-    shouldDisplayN_A: !id || id === null || id === undefined || id === "",
-  });
+  const { id, name, lon, lat } =
+    (focus as { id?: string; name?: string; lon?: number; lat?: number }) || {};
 
   return (
     <div className="focuscard-improved">
@@ -1080,14 +1159,20 @@ export default function FocusCard() {
             )}
 
             {/* Custom Attributes Display */}
-            {(focus as any)?._rawAttributes &&
-              Array.isArray((focus as any)._rawAttributes) && (
+            {(focus as { _rawAttributes?: SpatialFeatureAttribute[] })
+              ?._rawAttributes &&
+              Array.isArray(
+                (focus as { _rawAttributes?: SpatialFeatureAttribute[] })
+                  ._rawAttributes
+              ) && (
                 <div className="attributes-section">
                   <div className="attributes-label">
                     <span className="iconfocuscard">list</span>Atribut Kustom
                   </div>
                   <div className="attributes-list">
-                    {((focus as any)._rawAttributes as any[])
+                    {(
+                      focus as { _rawAttributes: SpatialFeatureAttribute[] }
+                    )._rawAttributes
                       .filter((attr) => {
                         // Filter out system attributes
                         const systemAttributes = [
