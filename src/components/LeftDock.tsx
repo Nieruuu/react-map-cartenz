@@ -614,6 +614,14 @@ export default function LeftDock() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleteInProgress, setIsDeleteInProgress] = useState(false);
 
+  // Translate layer confirmation state
+  const [showTranslateLayerConfirm, setShowTranslateLayerConfirm] =
+    useState(false);
+  const [
+    isTranslateLayerConfirmInProgress,
+    setIsTranslateLayerConfirmInProgress,
+  ] = useState(false);
+
   // Add to layer workflow state
   const [targetLayerForAdd, setTargetLayerForAdd] = useState<{
     id: string;
@@ -762,6 +770,10 @@ export default function LeftDock() {
   const deleteDialogRef = useRef<HTMLDivElement | null>(null);
   const deleteConfirmButtonRef = useRef<HTMLButtonElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+
+  // Translate layer confirmation refs
+  const translateLayerConfirmDialogRef = useRef<HTMLDivElement | null>(null);
+  const translateLayerConfirmButtonRef = useRef<HTMLButtonElement | null>(null);
 
   /* ---------- Import ---------- */
   function inferKindFromFeatureCollection(fc: { features?: unknown[] }): Kind {
@@ -1992,15 +2004,12 @@ export default function LeftDock() {
     if (!map) return;
     const prev = uiMode;
 
-    if (prev === "draw" && drawSessionRef.current) {
+    if (drawSessionRef.current) {
       const session = drawSessionRef.current;
 
-      // Completely remove legacy layer creation logic
-      // Layers should only be created through the API workflow (handleFormSave)
-      // This eliminates the double layer creation issue
-
-      // Just clean up the session layer without creating any new layers
+      // Always clean up the temporary drawing layer (draw or add-to-layer modes)
       map.removeLayer(session.layer);
+      session.src.clear();
     }
 
     if (drawRef.current) {
@@ -2362,6 +2371,84 @@ export default function LeftDock() {
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [showDeleteConfirm, isDeleteInProgress, closeDeleteConfirm]);
+
+  // Translate layer confirmation handlers
+  const closeTranslateLayerConfirm = useCallback(() => {
+    setShowTranslateLayerConfirm(false);
+    setIsTranslateLayerConfirmInProgress(false);
+    window.setTimeout(() => {
+      previousFocusRef.current?.focus?.();
+    }, 0);
+  }, []);
+
+  const handleTranslateLayerBackdropClick = () => {
+    if (isTranslateLayerConfirmInProgress) return;
+    closeTranslateLayerConfirm();
+  };
+
+  const handleCancelTranslateLayer = () => {
+    if (isTranslateLayerConfirmInProgress) return;
+    closeTranslateLayerConfirm();
+  };
+
+  const handleConfirmTranslateLayer = async () => {
+    if (isTranslateLayerConfirmInProgress) return;
+    await handleTranslateLayerConfirmSave();
+  };
+
+  useEffect(() => {
+    if (!showTranslateLayerConfirm) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (!isTranslateLayerConfirmInProgress) {
+          closeTranslateLayerConfirm();
+        }
+        return;
+      }
+
+      if (event.key === "Tab") {
+        const dialog = translateLayerConfirmDialogRef.current;
+        if (!dialog) return;
+        const focusable = dialog.querySelectorAll<HTMLElement>(
+          "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])"
+        );
+        if (focusable.length === 0) {
+          event.preventDefault();
+          return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey) {
+          if (document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+          }
+        } else if (document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [
+    showTranslateLayerConfirm,
+    isTranslateLayerConfirmInProgress,
+    closeTranslateLayerConfirm,
+  ]);
+
+  useEffect(() => {
+    if (!showTranslateLayerConfirm) return;
+    const timer = window.setTimeout(() => {
+      translateLayerConfirmButtonRef.current?.focus();
+    }, 20);
+    return () => window.clearTimeout(timer);
+  }, [showTranslateLayerConfirm]);
 
   useEffect(() => {
     if (!showDeleteConfirm) return;
@@ -3318,13 +3405,20 @@ export default function LeftDock() {
       return;
     }
 
+    // Show confirmation modal instead of saving directly
+    setShowTranslateLayerConfirm(true);
+  };
+
+  const handleTranslateLayerConfirmSave = async () => {
+    if (isTranslateLayerConfirmInProgress) return;
+    setIsTranslateLayerConfirmInProgress(true);
     setIsSavingTranslateLayer(true);
 
     try {
       const updatedFeatures = [];
 
       // Process each feature in the layer
-      for (const feature of targetLayerFeaturesRef.current) {
+      for (const feature of targetLayerFeaturesRef.current || []) {
         const featureId = feature.get("id");
 
         // Skip features without valid IDs (non-API features)
@@ -3389,7 +3483,7 @@ export default function LeftDock() {
 
       // Update original geometries reference
       const newOriginalGeometries = new Map<string, string>();
-      targetLayerFeaturesRef.current.forEach((feature) => {
+      targetLayerFeaturesRef.current?.forEach((feature) => {
         const featureId = String(feature.get("id") || "");
         const geometry = feature.getGeometry();
         if (geometry) {
@@ -3442,6 +3536,8 @@ export default function LeftDock() {
       }
     } finally {
       setIsSavingTranslateLayer(false);
+      setIsTranslateLayerConfirmInProgress(false);
+      setShowTranslateLayerConfirm(false);
     }
   };
 
@@ -4371,6 +4467,143 @@ export default function LeftDock() {
       )}
 
       {deleteConfirmationPortal}
+
+      {/* Translate Layer Confirmation Modal */}
+      {showTranslateLayerConfirm && typeof document !== "undefined"
+        ? createPortal(
+            <>
+              <style>{`
+                @keyframes translateLayerOverlayFade {
+                  from { opacity: 0; }
+                  to { opacity: 1; }
+                }
+                @keyframes translateLayerDialogScale {
+                  from { opacity: 0; transform: translateY(16px) scale(0.96); }
+                  to { opacity: 1; transform: translateY(0) scale(1); }
+                }
+              `}</style>
+              <div
+                onClick={handleTranslateLayerBackdropClick}
+                style={{
+                  position: "fixed",
+                  inset: 0,
+                  background: "rgba(15, 23, 42, 0.55)",
+                  backdropFilter: "blur(2px)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  zIndex: 5200,
+                  animation: "translateLayerOverlayFade 0.18s ease-out",
+                }}
+              >
+                <div
+                  ref={translateLayerConfirmDialogRef}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="translate-layer-confirm-title"
+                  aria-describedby="translate-layer-confirm-description"
+                  onClick={(event) => event.stopPropagation()}
+                  style={{
+                    width: "min(90%, 380px)",
+                    background: "#ffffff",
+                    borderRadius: 16,
+                    boxShadow: "0 24px 48px rgba(15,23,42,0.32)",
+                    padding: "24px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "16px",
+                    animation: "translateLayerDialogScale 0.22s ease-out",
+                  }}
+                >
+                  <div
+                    id="translate-layer-confirm-title"
+                    style={{
+                      fontSize: "18px",
+                      fontWeight: 700,
+                      color: "#111827",
+                    }}
+                  >
+                    Simpan Perubahan Layer
+                  </div>
+                  <p
+                    id="translate-layer-confirm-description"
+                    style={{
+                      margin: 0,
+                      fontSize: "14px",
+                      lineHeight: 1.6,
+                      color: "#4b5563",
+                    }}
+                  >
+                    Apakah kamu yakin mau menyimpan perubahan posisi untuk
+                    seluruh feature di layer ini?
+                  </p>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "flex-end",
+                      gap: "12px",
+                      marginTop: "8px",
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={handleCancelTranslateLayer}
+                      disabled={isTranslateLayerConfirmInProgress}
+                      style={{
+                        border: "1px solid #d1d5db",
+                        background: "#fff",
+                        color: "#374151",
+                        borderRadius: 8,
+                        padding: "10px 18px",
+                        fontSize: "14px",
+                        fontWeight: 500,
+                        cursor: isTranslateLayerConfirmInProgress
+                          ? "not-allowed"
+                          : "pointer",
+                        transition: "all 0.2s ease",
+                        opacity: isTranslateLayerConfirmInProgress ? 0.6 : 1,
+                      }}
+                    >
+                      Batal
+                    </button>
+                    <button
+                      type="button"
+                      ref={translateLayerConfirmButtonRef}
+                      onClick={handleConfirmTranslateLayer}
+                      disabled={isTranslateLayerConfirmInProgress}
+                      style={{
+                        border: "none",
+                        background: isTranslateLayerConfirmInProgress
+                          ? "#6366f1"
+                          : "#6366f1",
+                        color: "#ffffff",
+                        borderRadius: 8,
+                        padding: "10px 20px",
+                        fontSize: "14px",
+                        fontWeight: 600,
+                        cursor: isTranslateLayerConfirmInProgress
+                          ? "not-allowed"
+                          : "pointer",
+                        transition: "all 0.2s ease",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
+                        boxShadow: "0 10px 20px rgba(99,102,241,0.25)",
+                        opacity: isTranslateLayerConfirmInProgress ? 0.85 : 1,
+                      }}
+                    >
+                      <span className="icon">save</span>
+                      {isTranslateLayerConfirmInProgress
+                        ? "Menyimpan..."
+                        : "Ya, Simpan"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </>,
+            document.body
+          )
+        : null}
     </div>
   );
 }
