@@ -2710,7 +2710,8 @@ export default function LeftDock() {
   // Drawing workflow handlers
   const handleDrawingDone = () => {
     setPendingMultiMode(isMultiMode);
-    setShowDrawingToolbar(false);
+    // Keep toolbar visible while form is open so user can still cancel
+    setShowDrawingToolbar(true);
     setShowDrawingForm(true);
     if (isMultiMode) {
       setIsMultiMode(false);
@@ -2718,7 +2719,6 @@ export default function LeftDock() {
   };
 
   const handleDrawingCancel = () => {
-    setShowDrawingToolbar(false);
     setShowDrawingForm(false);
     setPendingMultiMode(false);
     setIsMultiMode(false);
@@ -2729,6 +2729,9 @@ export default function LeftDock() {
     }
 
     stopAll();
+
+    // Hide toolbar only after the workflow is fully cancelled
+    setShowDrawingToolbar(false);
   };
 
   const handleFormSave = async (
@@ -3374,6 +3377,8 @@ export default function LeftDock() {
       }
 
       setShowDrawingForm(false);
+      // Hide toolbar after successful save
+      setShowDrawingToolbar(false);
       stopAll();
     } catch (error) {
       console.error("Error saving drawing:", error);
@@ -3411,6 +3416,10 @@ export default function LeftDock() {
 
   const handleFormCancel = () => {
     setShowDrawingForm(false);
+    setShowDrawingToolbar(true);
+    if (pendingMultiMode) {
+      setIsMultiMode(true);
+    }
     setPendingMultiMode(false);
   };
 
@@ -4783,7 +4792,11 @@ export default function LeftDock() {
           isOpen={showDrawingForm}
           onClose={handleFormCancel}
           onSave={handleFormSave}
-          featureCount={drawSessionRef.current.src.getFeatures().length}
+          featureCount={
+            pendingMultiMode
+              ? 1
+              : drawSessionRef.current.src.getFeatures().length
+          }
           isLoading={isSavingDrawing}
           targetLayer={
             uiMode === "addToLayer" && targetLayerForAdd
