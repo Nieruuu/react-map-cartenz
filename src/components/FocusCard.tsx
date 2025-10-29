@@ -813,125 +813,104 @@ export default function FocusCard() {
         Array.isArray((focus as { _rawAttributes?: unknown[] })._rawAttributes);
 
       if (isApiFeature) {
-        // Prepare updates and immediately update the focus
         const updates: Record<string, unknown> = {};
         const deletes: string[] = [];
 
-        // Create the updated attributes array preserving all metadata
-        const updatedAttributes = metadataEditor.state.editableAttributes.map(
-          (attr, idx) => {
-            // Get original attribute if it exists
-            const originalAttr = (
-              focus as { _rawAttributes?: SpatialFeatureAttribute[] }
-            )?._rawAttributes?.find(
-              (raw: SpatialFeatureAttribute) =>
-                raw.attributeKey === attr.attributeKey
-            );
+        const originalFeature = metadataEditor.state.originalFeature;
+        const originalAttributes = Array.isArray(originalFeature?.attribute)
+          ? (originalFeature?.attribute as SpatialFeatureAttribute[])
+          : [];
 
-            // Preserve all metadata from original attribute or create new complete attribute
-            return {
-              id: originalAttr?.id || Number(`${Date.now()}${idx}`),
-              dataType: originalAttr?.dataType ?? 1,
-              rowIdentifier:
-                originalAttr?.rowIdentifier ??
-                (focus as { id?: string })?.id ??
-                0,
-              groupIdentifier: originalAttr?.groupIdentifier ?? null,
-              attributeIndex: originalAttr?.attributeIndex ?? idx,
-              attributeKey: attr.attributeKey,
-              attributeLabel: attr.attributeLabel || attr.attributeKey,
-              attributeValue: attr.attributeValue,
-              attributeValueType: originalAttr?.attributeValueType ?? 1,
-              status: originalAttr?.status ?? 1,
-            };
-          }
-        );
+        const originalNamaWilayah = originalAttributes.find(
+          (attr) => attr.attributeKey === "spatialFeature.refWilayah"
+        )?.attributeValue;
 
-        // Make sure to include spatialFeature.refWilayah in attributes
-        const refWilayahAttr = {
-          id: Number(`${Date.now()}${updatedAttributes.length}`),
-          dataType: 1,
-          rowIdentifier: (focus as { id?: string })?.id ?? 0,
-          groupIdentifier: null,
-          attributeIndex: updatedAttributes.length,
-          attributeKey: "spatialFeature.refWilayah",
-          attributeLabel: "spatialFeature.refWilayah",
-          attributeValue: metadataEditor.state.namaWilayah,
-          attributeValueType: 1,
-          status: 1,
-        };
-
-        // Preserve all existing attributes and override with updates
-        const allAttributes = [
-          refWilayahAttr,
-          ...updatedAttributes,
-          // Keep system attributes that weren't edited
-          ...(
-            (focus as { _rawAttributes?: SpatialFeatureAttribute[] })
-              ?._rawAttributes || []
-          ).filter(
-            (attr: SpatialFeatureAttribute) =>
-              attr.attributeKey.startsWith("spatialFeature.") &&
-              attr.attributeKey !== "spatialFeature.refWilayah" &&
-              !updatedAttributes.some(
-                (ua) => ua.attributeKey === attr.attributeKey
-              )
-          ),
-        ];
-
-        // Immediately update the focus with new attributes
-        const updatedFocus = {
-          ...(focus as Record<string, unknown>),
-          name: metadataEditor.state.namaWilayah,
-          _rawAttributes: allAttributes,
-        };
-        setFocus(updatedFocus);
-
-        // Build updates from the metadata editor state
-        const originalNamaWilayah =
-          metadataEditor.state.originalFeature?.attribute?.find(
-            (attr) => attr.attributeKey === "spatialFeature.refWilayah"
-          )?.attributeValue || "";
-
-        // Add nama wilayah update if changed
-        if (metadataEditor.state.namaWilayah !== originalNamaWilayah) {
+        if (
+          typeof metadataEditor.state.namaWilayah === "string" &&
+          metadataEditor.state.namaWilayah !== (originalNamaWilayah ?? "")
+        ) {
           updates["spatialFeature.refWilayah"] =
             metadataEditor.state.namaWilayah;
         }
 
-        // Add all attribute updates
         metadataEditor.state.editableAttributes.forEach((attr) => {
-          const originalAttr =
-            metadataEditor.state.originalFeature?.attribute?.find(
-              (orig: SpatialFeatureAttribute) =>
-                orig.id === parseInt(attr.id) ||
-                orig.attributeKey === `spatialFeature.${attr.attributeKey}`
-            );
+          const fullKey = `spatialFeature.${attr.attributeKey}`;
+          const originalAttr = originalAttributes.find(
+            (orig) => orig.attributeKey === fullKey
+          );
 
-          // Include attribute if it's new or its value has changed
-          if (attr.isNew && attr.attributeValue.trim() !== "") {
-            updates[`spatialFeature.${attr.attributeKey}`] =
-              attr.attributeValue;
+          if (attr.isNew) {
+            const trimmedValue = attr.attributeValue.trim();
+            if (trimmedValue !== "") {
+              updates[fullKey] = trimmedValue;
+            }
           } else if (
             originalAttr &&
             originalAttr.attributeValue !== attr.attributeValue
           ) {
-            updates[`spatialFeature.${attr.attributeKey}`] =
-              attr.attributeValue;
+            updates[fullKey] = attr.attributeValue;
           }
         });
 
-        // Send the apply event with layer reload request
+        const updatedFeature = await metadataEditor.actions.saveChanges();
+
+        if (!updatedFeature) {
+          setToast({ type: "error", msg: "Gagal menyimpan metadata." });
+          return;
+        }
+
+        shouldAutoCloseRef.current = true;
+
+        const resolvedLayerId = String(
+          (focus as { layerId?: string })?.layerId ?? ""
+        );
+
+        const normalizedAttributes: SpatialFeatureAttribute[] = Array.isArray(
+          updatedFeature.attribute
+        )
+          ? (updatedFeature.attribute as SpatialFeatureAttribute[]).map(
+              (attr, index) => ({
+                ...attr,
+                attributeIndex:
+                  attr.attributeIndex !== undefined
+                    ? attr.attributeIndex
+                    : index,
+              })
+            )
+          : [];
+
+        const updatedNameFromAttributes = normalizedAttributes.find(
+          (attr) => attr.attributeKey === "spatialFeature.refWilayah"
+        )?.attributeValue;
+
+        const propsForFocus = {
+          id: String(
+            updatedFeature.id ??
+              (focus as { id?: string })?.id ??
+              ""
+          ),
+          name:
+            updatedNameFromAttributes ||
+            metadataEditor.state.namaWilayah ||
+            (focus as { name?: string })?.name ||
+            "",
+          _rawAttributes: normalizedAttributes,
+        };
+
+        syncFocusWithProps(propsForFocus, resolvedLayerId);
+
         console.log(
-          "FocusCard: Dispatching apply-feature-props event with reloadLayer=true",
+          "FocusCard: Dispatching apply-feature-props event with updated feature",
           {
             id: (focus as { id?: string; layerId?: string })?.id,
             layerId: (focus as { id?: string; layerId?: string }).layerId,
             updates,
             deletes,
             reloadLayer: true,
+            skipServerUpdate: true,
           }
         );
+
         window.dispatchEvent(
           new CustomEvent("apply-feature-props", {
             detail: {
@@ -939,14 +918,19 @@ export default function FocusCard() {
               layerId: (focus as { id?: string; layerId?: string }).layerId,
               updates,
               deletes,
-              reloadLayer: true, // Request layer reload after save
+              reloadLayer: true,
+              skipServerUpdate: true,
+              updatedFeature,
+              updatedRawAttributes: normalizedAttributes,
             },
           })
         );
+
+        setToast({ type: "success", msg: "Metadata berhasil disimpan." });
       } else {
         // Local feature: use direct save method
-        const success = await metadataEditor.actions.saveChanges();
-        if (success) {
+        const updatedFeature = await metadataEditor.actions.saveChanges();
+        if (updatedFeature) {
           // Re-enable auto-close after saving
           shouldAutoCloseRef.current = true;
           setToast({ type: "success", msg: "Metadata berhasil disimpan." });
