@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { fromLonLat } from "ol/proj";
 import { useMapStore } from "../hooks/useMapStore";
 import { useMetadataEditor } from "../hooks/useMetadataEditor";
+import { useAppLoading } from "../hooks/useLoadingState";
 import type {
   SpatialFeature,
   SpatialFeatureAttribute,
@@ -12,6 +13,8 @@ import type {
 export default function FocusCard() {
   const { focus, setFocus } = useMapStore();
   const metadataEditor = useMetadataEditor();
+  const { startLoading, updateProgress, finishLoading, showError } =
+    useAppLoading();
 
   // Track when the metadata editor has been populated with fresh data
   const editorInitializedRef = useRef(false);
@@ -25,6 +28,7 @@ export default function FocusCard() {
   } | null>(null);
 
   const [showSaveConfirmation, setShowSaveConfirmation] = useState(false);
+  const metadataIsEditing = metadataEditor.state.isEditing;
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(null), 1500);
@@ -36,7 +40,14 @@ export default function FocusCard() {
   // Auto-close FocusCard when interacting with other UI elements
   const handleOutsideInteraction = useCallback(
     (event: Event) => {
-      if (!focus || !shouldAutoCloseRef.current) return;
+      if (
+        !focus ||
+        !shouldAutoCloseRef.current ||
+        metadataIsEditing ||
+        showSaveConfirmation
+      ) {
+        return;
+      }
 
       // Don't close if clicking inside the FocusCard
       const focusCardElement = document.querySelector(".focuscard-improved");
@@ -53,7 +64,7 @@ export default function FocusCard() {
       // Close FocusCard when interacting with other UI elements
       setFocus(null);
     },
-    [focus, setFocus]
+    [focus, metadataIsEditing, showSaveConfirmation, setFocus]
   );
 
   const syncFocusWithProps = useCallback(
@@ -799,11 +810,14 @@ export default function FocusCard() {
 
   const saveAll = async () => {
     // Show confirmation modal first
+    shouldAutoCloseRef.current = false;
     setShowSaveConfirmation(true);
   };
 
   const confirmSave = async () => {
     setShowSaveConfirmation(false);
+    startLoading("Menyimpan perubahan metadata...");
+    updateProgress(10, "Menyiapkan perubahan...");
 
     try {
       // For API-loaded features, the save is handled by the TaxMap component
@@ -852,9 +866,13 @@ export default function FocusCard() {
           }
         });
 
-        const updatedFeature = await metadataEditor.actions.saveChanges();
+        const updatedFeature = await metadataEditor.actions.saveChanges({
+          onProgress: (progress, message) =>
+            updateProgress(progress, message),
+        });
 
         if (!updatedFeature) {
+          showError("Gagal menyimpan metadata.");
           setToast({ type: "error", msg: "Gagal menyimpan metadata." });
           return;
         }
@@ -897,6 +915,7 @@ export default function FocusCard() {
           _rawAttributes: normalizedAttributes,
         };
 
+        updateProgress(88, "Sinkronisasi metadata dengan peta...");
         syncFocusWithProps(propsForFocus, resolvedLayerId);
 
         console.log(
@@ -926,20 +945,35 @@ export default function FocusCard() {
           })
         );
 
-        setToast({ type: "success", msg: "Metadata berhasil disimpan." });
+        updateProgress(95, "Menuntaskan pembaruan antarmuka...");
+        finishLoading();
+        setToast({
+          type: "success",
+          msg: "Metadata berhasil disimpan dan diperbarui.",
+        });
       } else {
         // Local feature: use direct save method
-        const updatedFeature = await metadataEditor.actions.saveChanges();
+        const updatedFeature = await metadataEditor.actions.saveChanges({
+          onProgress: (progress, message) =>
+            updateProgress(progress, message),
+        });
         if (updatedFeature) {
           // Re-enable auto-close after saving
           shouldAutoCloseRef.current = true;
-          setToast({ type: "success", msg: "Metadata berhasil disimpan." });
+          updateProgress(95, "Pembaruan lokal selesai...");
+          finishLoading();
+          setToast({
+            type: "success",
+            msg: "Metadata berhasil disimpan dan diperbarui.",
+          });
         } else {
+          showError("Gagal menyimpan metadata.");
           setToast({ type: "error", msg: "Gagal menyimpan metadata." });
         }
       }
     } catch (error) {
       console.error("Error saving metadata:", error);
+      showError("Terjadi kesalahan saat menyimpan.");
       setToast({ type: "error", msg: "Terjadi kesalahan saat menyimpan." });
     }
   };

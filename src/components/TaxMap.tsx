@@ -1392,8 +1392,8 @@ export default function TaxMap() {
     };
     window.addEventListener("edit-metadata", onEditMetadata as any);
 
-    // Kirim seluruh properties utk editor (kecuali geometry)
-    const onRequestProps = (ev: Event) => {
+    // Kirim seluruh properties utk editor (kecuali geometry) dengan data terbaru dari API
+    const onRequestProps = async (ev: Event) => {
       const { id, layerId } = (ev as CustomEvent<any>).detail || {};
       if (!id) return;
 
@@ -1404,42 +1404,142 @@ export default function TaxMap() {
         ? st.layers.filter((l) => l.id === layerId)
         : st.layers;
 
-      let props: Record<string, any> = {};
       let foundFeature: any = null;
       let foundLayerId: string | null = null;
+      let foundLayerEntry:
+        | ReturnType<typeof useLayersStore.getState>["layers"][number]
+        | null = null;
 
       for (const le of targets) {
         const src = (le.layer as VectorLayer<VectorSource>).getSource?.();
         if (!src) continue;
-        const ft = src
+        const candidate = src
           .getFeatures()
           .find((f: any) => String(f.get("id") || "") === String(id));
-        if (!ft) continue;
-        const raw = ft.getProperties?.() || {};
-        const { ...rest } = raw as any;
-        props = rest;
-        foundFeature = ft;
+        if (!candidate) continue;
+        foundFeature = candidate;
         foundLayerId = le.id;
+        foundLayerEntry = le;
         break;
       }
 
-      // Check if this is an API-loaded feature with _rawAttributes
-      if (foundFeature && foundFeature.get("_rawAttributes")) {
-        props._rawAttributes = foundFeature.get("_rawAttributes");
+      if (!foundFeature) {
+        window.dispatchEvent(
+          new CustomEvent("feature-props-error", {
+            detail: {
+              id,
+              layerId,
+              error: "Feature not found in current map layers",
+            },
+          })
+        );
+        return;
       }
 
-      // Add geometry information for coordinate updates
-      if (foundFeature) {
-        const geom = foundFeature.getGeometry() as Geometry;
-        if (geom) {
-          const p3857 = bestPointForStreetView(geom);
-          const [lon, lat] = toLonLat(p3857);
-          const geom4326 = geom.clone().transform("EPSG:3857", "EPSG:4326");
+      const props: Record<string, any> =
+        (foundFeature.getProperties?.() as Record<string, any>) || {};
+      props.id = props.id ?? foundFeature.get("id") ?? id;
 
-          props.lon = lon;
-          props.lat = lat;
-          props.geometry = new GeoJSON().writeGeometryObject(geom4326);
+      const hasApiAttributes =
+        Array.isArray(foundFeature.get("_rawAttributes")) ||
+        Array.isArray(props._rawAttributes);
+
+      if (hasApiAttributes) {
+        try {
+          const { getSpatialFeatureById } = await import(
+            "../lib/api/spatialFeature"
+          );
+          const freshFeature = await getSpatialFeatureById(Number(id));
+
+          const normalizedAttributes: SpatialFeatureAttribute[] =
+            Array.isArray(freshFeature.attribute)
+              ? (freshFeature.attribute as SpatialFeatureAttribute[]).map(
+                  (attr, index) => ({
+                    ...attr,
+                    attributeIndex:
+                      attr.attributeIndex !== undefined
+                        ? attr.attributeIndex
+                        : index,
+                  })
+                )
+              : [];
+
+          const refreshedName =
+            normalizedAttributes.find(
+              (attr) => attr.attributeKey === "spatialFeature.refWilayah"
+            )?.attributeValue ||
+            (typeof freshFeature.label === "string"
+              ? freshFeature.label
+              : undefined) ||
+            (typeof props.name === "string" ? props.name : undefined);
+
+          foundFeature.set(
+            "_rawAttributes",
+            normalizedAttributes.map((attr) => ({ ...attr }))
+          );
+          props._rawAttributes = normalizedAttributes.map((attr) => ({
+            ...attr,
+          }));
+
+          if (refreshedName) {
+            foundFeature.set("name", refreshedName);
+            props.name = refreshedName;
+          }
+
+          if (foundLayerEntry?.layer) {
+            (foundLayerEntry.layer as any).changed?.();
+          }
+
+          const currentFocus = useMapStore.getState().focus;
+          if (
+            currentFocus &&
+            typeof currentFocus === "object" &&
+            String((currentFocus as any)?.id ?? "") === String(id)
+          ) {
+            useMapStore.getState().setFocus({
+              ...(currentFocus as any),
+              name: props.name,
+              _rawAttributes: props._rawAttributes,
+            });
+          }
+        } catch (error) {
+          console.error("TaxMap: Failed to fetch latest feature props", error);
+          window.dispatchEvent(
+            new CustomEvent("feature-props-error", {
+              detail: {
+                id,
+                layerId: foundLayerId || layerId,
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Failed to fetch feature metadata",
+              },
+            })
+          );
+          return;
         }
+      } else if (
+        props._rawAttributes &&
+        Array.isArray(props._rawAttributes)
+      ) {
+        props._rawAttributes = (props._rawAttributes as SpatialFeatureAttribute[]).map(
+          (attr: SpatialFeatureAttribute, index: number) => ({
+            ...attr,
+            attributeIndex:
+              attr.attributeIndex !== undefined ? attr.attributeIndex : index,
+          })
+        );
+      }
+
+      const geom = foundFeature.getGeometry() as Geometry;
+      if (geom) {
+        const p3857 = bestPointForStreetView(geom);
+        const [lon, lat] = toLonLat(p3857);
+        const geom4326 = geom.clone().transform("EPSG:3857", "EPSG:4326");
+
+        props.lon = lon;
+        props.lat = lat;
+        props.geometry = new GeoJSON().writeGeometryObject(geom4326);
       }
 
       console.log("TaxMap: Sending feature-props-response", {

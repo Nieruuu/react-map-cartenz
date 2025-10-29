@@ -34,12 +34,16 @@ export type MetadataEditorState = {
   validationErrors: Record<string, string | undefined>;
 };
 
+export type SaveChangesOptions = {
+  onProgress?: (progress: number, message?: string) => void;
+};
+
 export type UseMetadataEditorReturn = {
   state: MetadataEditorState;
   actions: {
     startEditing: (feature: SpatialFeature) => void;
     cancelEditing: () => void;
-    saveChanges: () => Promise<SpatialFeature | null>;
+    saveChanges: (options?: SaveChangesOptions) => Promise<SpatialFeature | null>;
     updateNamaWilayah: (value: string) => void;
     updateIdWilayah: (value: string) => void;
     updateAttribute: (id: string, field: keyof EditableAttribute, value: unknown) => void;
@@ -292,7 +296,7 @@ export function useMetadataEditor(): UseMetadataEditorReturn {
     });
   }, []);
 
-  const saveChanges = useCallback(async (): Promise<SpatialFeature | null> => {
+  const saveChanges = useCallback(async (options?: SaveChangesOptions): Promise<SpatialFeature | null> => {
     if (!state.featureId || !state.originalFeature) return null;
 
     // Validate all attributes first
@@ -301,6 +305,8 @@ export function useMetadataEditor(): UseMetadataEditorReturn {
     }
 
     setState(prev => ({ ...prev, isLoading: true }));
+    const onProgress = options?.onProgress;
+    onProgress?.(20, 'Mengambil metadata terbaru...');
 
     try {
       const featureId = state.featureId;
@@ -308,6 +314,7 @@ export function useMetadataEditor(): UseMetadataEditorReturn {
       // STEP 1: Perform pre-flight GET request to get current complete attribute data
       console.log('Performing pre-flight GET request for feature:', featureId);
       const currentFeature = await getSpatialFeatureById(featureId);
+      onProgress?.(35, 'Menyiapkan perubahan metadata...');
       
       // Start with all existing attributes from the current feature (not original)
       let allAttributes: SpatialFeatureAttribute[] = [];
@@ -424,7 +431,11 @@ export function useMetadataEditor(): UseMetadataEditorReturn {
 
       // STEP 4: Make API call to update the feature with ALL attributes
       console.log('Sending PATCH request with', allAttributes.length, 'attributes');
-      const updatedFeature = await updateSpatialFeature(featureId, allAttributes);
+      onProgress?.(55, 'Mengirim perubahan ke server...');
+      await updateSpatialFeature(featureId, allAttributes);
+      onProgress?.(70, 'Mengambil data terbaru dari server...');
+      const freshFeature = await getSpatialFeatureById(featureId);
+      onProgress?.(82, 'Memperbarui data editor...');
 
       // STEP 5: Update state with the new feature data
       const editableAttributes: EditableAttribute[] = [];
@@ -436,8 +447,8 @@ export function useMetadataEditor(): UseMetadataEditorReturn {
         'spatialFeature.refWilayah'
       ]);
 
-      if (updatedFeature.attribute && Array.isArray(updatedFeature.attribute)) {
-        updatedFeature.attribute.forEach(attr => {
+      if (freshFeature.attribute && Array.isArray(freshFeature.attribute)) {
+        freshFeature.attribute.forEach(attr => {
           // Skip system attributes
           if (systemAttributes.has(attr.attributeKey)) {
             return;
@@ -460,22 +471,22 @@ export function useMetadataEditor(): UseMetadataEditorReturn {
         });
       }
 
-      const newNamaWilayah = updatedFeature.attribute?.find(attr => attr.attributeKey === 'spatialFeature.refWilayah')?.attributeValue || '';
-      const newIdWilayah = String(updatedFeature.id || '');
+      const newNamaWilayah = freshFeature.attribute?.find(attr => attr.attributeKey === 'spatialFeature.refWilayah')?.attributeValue || '';
+      const newIdWilayah = String(freshFeature.id || '');
 
       setState({
-        featureId: updatedFeature.id,
+        featureId: freshFeature.id,
         isEditing: true,
         isLoading: false,
         hasUnsavedChanges: false,
-        originalFeature: updatedFeature,
+        originalFeature: freshFeature,
         editableAttributes,
         namaWilayah: newNamaWilayah,
         idWilayah: newIdWilayah,
         validationErrors: {},
       });
 
-      return updatedFeature;
+      return freshFeature;
     } catch (error) {
       console.error('Failed to save metadata:', error);
       
@@ -499,6 +510,7 @@ export function useMetadataEditor(): UseMetadataEditorReturn {
       alert(errorMessage);
 
       setState(prev => ({ ...prev, isLoading: false }));
+      onProgress?.(0, ''); // reset progress indicator in case of error
       return null;
     }
   }, [state, validateAll]);
