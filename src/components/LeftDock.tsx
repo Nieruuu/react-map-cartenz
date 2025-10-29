@@ -672,6 +672,249 @@ export default function LeftDock() {
   const [currentLayerFeatureCount, setCurrentLayerFeatureCount] =
     useState<number>(0);
 
+  // API import state
+  const [importMode, setImportMode] = useState<"local" | "api">("local");
+  const [isApiImportInProgress, setIsApiImportInProgress] = useState(false);
+
+  // Function to extract layer type from filename
+  const extractLayerTypeFromFileName = (fileName: string): string => {
+    const baseName = fileName
+      .replace(/\.(zip|shp|geojson|json)$/i, "")
+      .toLowerCase();
+
+    // Check for known patterns in filename - more comprehensive patterns
+    if (
+      baseName.includes("kabupaten") ||
+      baseName.includes("kab") ||
+      baseName.includes("kabupaten") ||
+      baseName.includes("regency") ||
+      baseName.includes("county")
+    ) {
+      return "kabupaten";
+    } else if (
+      baseName.includes("kecamatan") ||
+      baseName.includes("kec") ||
+      baseName.includes("district") ||
+      baseName.includes("subdistrict")
+    ) {
+      return "kecamatan";
+    } else if (
+      baseName.includes("kelurahan") ||
+      baseName.includes("kel") ||
+      baseName.includes("village") ||
+      baseName.includes("desa") ||
+      baseName.includes("subvillage")
+    ) {
+      return "kelurahan";
+    }
+
+    // If no known pattern matches, use the filename itself as the layer type
+    // This ensures "mengwi.zip" becomes "mengwi" instead of "custom"
+    console.log(
+      `No known pattern matched for filename "${fileName}", using filename as layer type: "${baseName}"`
+    );
+    return baseName;
+  };
+
+  // Function to import features to API
+  const importFeaturesToAPI = async (
+    features: GeoJSONFeature[],
+    layerType: string,
+    fileName: string
+  ): Promise<void> => {
+    if (!features.length) {
+      throw new Error("No features to import");
+    }
+
+    console.log(
+      `Importing ${features.length} features to API with layer type: ${layerType} (from filename: ${fileName})`
+    );
+
+    // Process each feature
+    for (let i = 0; i < features.length; i++) {
+      const feature = features[i];
+      const properties = feature.properties || {};
+
+      try {
+        // Convert geometry to WKT
+        const wktGeometry = geometryToWKT(feature.geometry as any);
+        if (!wktGeometry) {
+          console.warn(
+            `Failed to convert feature ${i + 1} geometry to WKT, skipping`
+          );
+          continue;
+        }
+
+        // Build attributes array according to user requirements
+        const attributes: Array<{
+          attributeKey: string;
+          attributeLabel: string;
+          attributeValueType: number;
+          attributeValue: string;
+          status: number;
+        }> = [];
+
+        // Add spatialFeature.type from properties or fallback to layerType
+        attributes.push({
+          attributeKey: "spatialFeature.type",
+          attributeLabel: "Type",
+          attributeValueType: 1,
+          attributeValue: properties.type || layerType,
+          status: 1,
+        });
+
+        // Add spatialFeature.geometry
+        attributes.push({
+          attributeKey: "spatialFeature.geometry",
+          attributeLabel: "Geometry",
+          attributeValueType: 13,
+          attributeValue: wktGeometry,
+          status: 1,
+        });
+
+        // Add spatialFeature.refWilayah from "name" property if exists
+        if (properties.name) {
+          attributes.push({
+            attributeKey: "spatialFeature.refWilayah",
+            attributeLabel: "Ref Wilayah",
+            attributeValueType: 1,
+            attributeValue: String(properties.name),
+            status: 1,
+          });
+        }
+
+        // Add custom attributes (all properties except id, type, name)
+        Object.entries(properties).forEach(([key, value]) => {
+          // Skip id, type, and name as they're handled separately (case-insensitive for type)
+          if (key === "id" || key.toLowerCase() === "type" || key === "name") {
+            return;
+          }
+
+          // Convert value to string
+          const stringValue =
+            value !== null && value !== undefined ? String(value) : "";
+
+          attributes.push({
+            attributeKey: `spatialFeature.${key}`,
+            attributeLabel: key,
+            attributeValueType: 1,
+            attributeValue: stringValue,
+            status: 1,
+          });
+        });
+
+        // Create the payload for API
+        const payload = {
+          identifier: "spatialFeature.uuid",
+          label: "uuid",
+          value: generateUUID(),
+          status: 1,
+          attribute: attributes,
+        };
+
+        console.log(
+          `Creating feature ${i + 1}/${
+            features.length
+          } in API with layer type: ${layerType}`
+        );
+        console.log("Feature properties:", properties);
+        console.log("API payload attributes:", attributes);
+        await createSpatialFeature(payload);
+      } catch (error) {
+        console.error(`Failed to import feature ${i + 1}:`, error);
+        // Continue with next feature instead of failing completely
+      }
+    }
+  };
+
+  // Function to handle API import workflow
+  const importFileToAPI = async (file: File): Promise<void> => {
+    try {
+      setIsApiImportInProgress(true);
+      flash("Memproses file untuk import ke API...", "ok");
+
+      // Extract layer type from filename
+      const layerType = extractLayerTypeFromFileName(file.name);
+      console.log(
+        `Detected layer type: ${layerType} from filename: ${file.name}`
+      );
+
+      let parsed: unknown = null;
+
+      // Parse the file
+      if (/\.zip$/i.test(file.name)) {
+        const buffer = await file.arrayBuffer();
+        parsed = await parseShapefileZip(buffer);
+      } else if (/\.(geo)?json$/i.test(file.name)) {
+        const text = await file.text();
+        parsed = JSON.parse(text);
+      } else {
+        throw new Error("Format file tidak didukung. Pilih .zip atau .geojson");
+      }
+
+      // Extract feature collection
+      const extractFeatureCollection = (data: unknown): unknown => {
+        if (!data) return null;
+        if (
+          (data as { type?: string }).type === "FeatureCollection" &&
+          Array.isArray((data as { features?: unknown[] }).features)
+        ) {
+          return data;
+        }
+        if (Array.isArray(data)) {
+          const features = data.filter(
+            (item) =>
+              item && typeof item === "object" && item.type === "Feature"
+          );
+          if (features.length) {
+            return { type: "FeatureCollection", features };
+          }
+        }
+        if (typeof data === "object") {
+          for (const value of Object.values(data)) {
+            const fc = extractFeatureCollection(value);
+            if (fc) return fc;
+          }
+        }
+        return null;
+      };
+
+      const rawFC = extractFeatureCollection(parsed);
+      if (!rawFC) {
+        throw new Error("Tidak menemukan FeatureCollection di dalam file.");
+      }
+
+      // Sanitize the feature collection
+      const sanitized =
+        sanitizeFeatureCollection(rawFC) ||
+        fallbackPolygonFeatureCollection(rawFC) ||
+        rawFC;
+
+      const featureCollection = sanitized as GeoJSONFeatureCollection;
+      console.log(
+        `Processed ${featureCollection.features.length} features for API import`
+      );
+
+      // Import features to API
+      await importFeaturesToAPI(
+        featureCollection.features,
+        layerType,
+        file.name
+      );
+
+      flash(
+        `Berhasil mengimport ${featureCollection.features.length} feature ke API dengan tipe layer: ${layerType}`,
+        "ok"
+      );
+    } catch (error) {
+      console.error("API import failed:", error);
+      const message = error instanceof Error ? error.message : String(error);
+      flash(`Gagal import ke API: ${message}`, "err", 3400);
+    } finally {
+      setIsApiImportInProgress(false);
+    }
+  };
+
   // Add a manual check function to force change detection
   const checkForGeometryChanges = useCallback(() => {
     const tf = targetFeatureRef.current;
@@ -950,7 +1193,13 @@ export default function LeftDock() {
     const f = e.target.files?.[0];
     e.currentTarget.value = "";
     if (!f) return;
-    await importFile(f);
+
+    // Route to appropriate import function based on mode
+    if (importMode === "api") {
+      await importFileToAPI(f);
+    } else {
+      await importFile(f);
+    }
   };
 
   /* ---------- Layer creation, tools, edit, move, dll. ---------- */
@@ -4298,12 +4547,135 @@ export default function LeftDock() {
           aria-hidden={!isOpen("io")}
         >
           <div className="ld-body-in">
+            {/* Import Mode Toggle */}
+            <div style={{ marginBottom: 12 }}>
+              <div
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  marginBottom: 6,
+                  color: "#374151",
+                }}
+              >
+                Mode Import:
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  background: "#f3f4f6",
+                  borderRadius: 8,
+                  padding: 2,
+                  gap: 2,
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => setImportMode("local")}
+                  style={{
+                    flex: 1,
+                    padding: "8px 12px",
+                    fontSize: 12,
+                    fontWeight: 500,
+                    border: "none",
+                    borderRadius: 6,
+                    background:
+                      importMode === "local" ? "#ffffff" : "transparent",
+                    color: importMode === "local" ? "#111827" : "#6b7280",
+                    cursor: "pointer",
+                    transition: "all 0.2s ease",
+                    boxShadow:
+                      importMode === "local"
+                        ? "0 1px 2px rgba(0,0,0,0.05)"
+                        : "none",
+                  }}
+                >
+                  <span
+                    className="icon"
+                    style={{ fontSize: 14, marginRight: 4 }}
+                  >
+                    folder
+                  </span>
+                  Local Import
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setImportMode("api")}
+                  style={{
+                    flex: 1,
+                    padding: "8px 12px",
+                    fontSize: 12,
+                    fontWeight: 500,
+                    border: "none",
+                    borderRadius: 6,
+                    background:
+                      importMode === "api" ? "#ffffff" : "transparent",
+                    color: importMode === "api" ? "#111827" : "#6b7280",
+                    cursor: "pointer",
+                    transition: "all 0.2s ease",
+                    boxShadow:
+                      importMode === "api"
+                        ? "0 1px 2px rgba(0,0,0,0.05)"
+                        : "none",
+                  }}
+                >
+                  <span
+                    className="icon"
+                    style={{ fontSize: 14, marginRight: 4 }}
+                  >
+                    cloud_upload
+                  </span>
+                  API Import
+                </button>
+              </div>
+              {importMode === "api" && (
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: "#059669",
+                    marginTop: 4,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 4,
+                  }}
+                >
+                  <span className="icon" style={{ fontSize: 12 }}>
+                    info
+                  </span>
+                  File akan dikonversi dan dikirim langsung ke API
+                </div>
+              )}
+            </div>
+
             <div
               className="import-export-tools"
               style={{ display: "flex", gap: 8, flexWrap: "wrap" }}
             >
-              <button className="btn-tool" onClick={onClickImport}>
-                <span className="icon">upload</span> Import Shapefile/GeoJSON
+              <button
+                className="btn-tool"
+                onClick={onClickImport}
+                disabled={isApiImportInProgress}
+                style={{
+                  opacity: isApiImportInProgress ? 0.6 : 1,
+                  cursor: isApiImportInProgress ? "not-allowed" : "pointer",
+                }}
+              >
+                <span className="icon">
+                  {isApiImportInProgress ? (
+                    <span
+                      className="icon"
+                      style={{
+                        animation: "spin 1s linear infinite",
+                        display: "inline-block",
+                      }}
+                    >
+                      refresh
+                    </span>
+                  ) : (
+                    "upload"
+                  )}
+                </span>
+                Import Shapefile/GeoJSON
+                {isApiImportInProgress && " (Mengirim...)"}
               </button>
               <input
                 ref={fileInputRef}
@@ -4311,26 +4683,20 @@ export default function LeftDock() {
                 accept=".zip,.geojson,application/zip,application/json"
                 style={{ display: "none" }}
                 onChange={onChangeFile}
+                disabled={isApiImportInProgress}
               />
               <button
                 className="btn-tool"
                 onClick={() => {
-                  setLoadTab("local");
+                  setLoadTab(importMode);
                   setOpenLoad(true);
                 }}
-                title="Tampilkan dataset import ke peta"
+                title={`Tampilkan dataset ${
+                  importMode === "api" ? "API" : "import"
+                } ke peta`}
               >
-                <span className="icon">layers</span> Load Peta (Imported)
-              </button>
-              <button
-                className="btn-tool"
-                onClick={() => {
-                  setLoadTab("api");
-                  setOpenLoad(true);
-                }}
-                title="Load data dari API SmartGov"
-              >
-                <span className="icon">cloud_download</span> Load (API)
+                <span className="icon">layers</span> Load Peta (
+                {importMode === "api" ? "API" : "Imported"})
               </button>
               <button
                 className="btn-tool"
@@ -4341,9 +4707,18 @@ export default function LeftDock() {
               </button>
             </div>
             <div className="muted" style={{ marginTop: 8, fontSize: 11 }}>
-              Hasil import tidak langsung tampil di peta. Buka{" "}
-              <b>Load Peta/Load (API)</b> untuk memilih dataset. Setelah edit,
-              gunakan <b>Export ZIP</b>.
+              {importMode === "local" ? (
+                <>
+                  Hasil import tidak langsung tampil di peta. Buka{" "}
+                  <b>Load Peta (Imported)</b> untuk memilih dataset. Setelah
+                  edit, gunakan <b>Export ZIP</b>.
+                </>
+              ) : (
+                <>
+                  File akan dikonversi ke WKT dan dikirim langsung ke API. Hasil
+                  dapat dilihat melalui <b>Load Peta (API)</b>.
+                </>
+              )}
             </div>
           </div>
         </div>

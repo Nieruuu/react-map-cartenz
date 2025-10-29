@@ -72,6 +72,8 @@ type S = {
   zoom: number;
   scaleText: string;
   setFocus: (f: unknown) => void;
+  suppressFocusRestore: boolean;
+  setSuppressFocusRestore: (value: boolean) => void;
   focus: unknown | null;
 
   // layer manager
@@ -160,7 +162,13 @@ export const useMapStore = create<S>((set, get) => ({
   setZoomAndScale: (zoom, scaleText) => set({ zoom, scaleText }),
 
   focus: null,
-  setFocus: (f) => set({ focus: f }),
+  setFocus: (f) =>
+    set((state) => ({
+      focus: f,
+      suppressFocusRestore: f ? false : state.suppressFocusRestore,
+    })),
+  suppressFocusRestore: false,
+  setSuppressFocusRestore: (value) => set({ suppressFocusRestore: value }),
 
   // layer manager
   layers: [],

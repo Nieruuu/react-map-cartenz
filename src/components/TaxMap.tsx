@@ -1958,7 +1958,9 @@ export default function TaxMap() {
         const { addApiLayersByType } = await import("../features/loadFromApi");
 
         // Store current focus state if this is the focused feature
-        const currentFocus = useMapStore.getState().focus;
+        const mapStoreState = useMapStore.getState();
+        const currentFocus = mapStoreState.focus;
+        const suppressFocusRestore = mapStoreState.suppressFocusRestore;
         const isFocusedFeature =
           currentFocus &&
           typeof currentFocus === "object" &&
@@ -2058,7 +2060,7 @@ export default function TaxMap() {
           }
 
           // ENHANCED: Immediate focus restoration with better timing
-          if (isFocusedFeature && updateUI) {
+          if (isFocusedFeature && updateUI && !suppressFocusRestore) {
             const restoreFocus = () => {
               // Find the feature in the new layer
               const source = newLayer.layer.getSource();
@@ -2170,6 +2172,10 @@ export default function TaxMap() {
             // Try immediately first, then fallback with longer delay
             restoreFocus();
             setTimeout(restoreFocus, 300);
+          } else if (isFocusedFeature && updateUI && suppressFocusRestore) {
+            console.log(
+              "TaxMap: Skipping automatic focus restoration due to suppression flag"
+            );
           }
 
           // Emit success event with enhanced details

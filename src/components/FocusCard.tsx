@@ -11,7 +11,7 @@ import type {
 } from "../lib/api/spatialFeature";
 
 export default function FocusCard() {
-  const { focus, setFocus } = useMapStore();
+  const { focus, setFocus, setSuppressFocusRestore } = useMapStore();
   const metadataEditor = useMetadataEditor();
   const { startLoading, updateProgress, finishLoading, showError } =
     useAppLoading();
@@ -21,6 +21,9 @@ export default function FocusCard() {
 
   // Ref to track if FocusCard should auto-close
   const shouldAutoCloseRef = useRef(true);
+
+  // Ref to track if FocusCard should stay hidden after save operation
+  const shouldStayHiddenRef = useRef(false);
 
   const [toast, setToast] = useState<{
     type: "success" | "error";
@@ -149,6 +152,10 @@ export default function FocusCard() {
 
     // Reset auto-close flag when focus changes
     shouldAutoCloseRef.current = true;
+    // Reset stay hidden flag when focus changes (unless we're in a save operation)
+    if (!shouldStayHiddenRef.current) {
+      shouldStayHiddenRef.current = false;
+    }
 
     // List of UI elements that should trigger auto-close
     const uiSelectors = [
@@ -222,8 +229,28 @@ export default function FocusCard() {
         layerMatches
       ) {
         console.log(
-          "FocusCard: Layer reload affects current focus, refreshing focus data"
+          "FocusCard: Layer reload affects current focus, checking if should stay hidden",
+          { shouldStayHidden: shouldStayHiddenRef.current }
         );
+
+        // If FocusCard should stay hidden after save, don't refresh or reopen it
+        if (shouldStayHiddenRef.current) {
+          console.log("FocusCard: Staying hidden after save operation");
+          // Clear the focus to keep FocusCard hidden
+          setTimeout(() => {
+            setSuppressFocusRestore(true);
+            setFocus(null);
+            // Reset the stay hidden flag after a delay
+            setTimeout(() => {
+              shouldStayHiddenRef.current = false;
+              console.log("FocusCard: Stay hidden flag reset");
+            }, 1000);
+          }, 100);
+          return;
+        }
+
+        // Disable auto-close while handling layer reload for current feature
+        shouldAutoCloseRef.current = false;
 
         if (props) {
           syncFocusWithProps(props, resolvedLayerId);
@@ -266,6 +293,14 @@ export default function FocusCard() {
 
               // Extract the updated name from the fresh data
               syncFocusWithProps(p, resolvedLayerId);
+
+              // Re-enable auto-close after successfully updating focus with fresh data
+              setTimeout(() => {
+                shouldAutoCloseRef.current = true;
+                console.log(
+                  "FocusCard: Auto-close re-enabled after fresh data update"
+                );
+              }, 200);
             }
           };
 
@@ -325,7 +360,13 @@ export default function FocusCard() {
         onLayerReloadedForFocusRefresh
       );
     };
-  }, [focus, handleOutsideInteraction, setFocus, syncFocusWithProps]);
+  }, [
+    focus,
+    handleOutsideInteraction,
+    setFocus,
+    setSuppressFocusRestore,
+    syncFocusWithProps,
+  ]);
 
   const openEditor = () => {
     if (!focus) return;
@@ -575,9 +616,19 @@ export default function FocusCard() {
         hasUpdatedSpatialFeature: !!updatedSpatialFeature,
       });
 
-      // Re-enable auto-close after successful save
-      shouldAutoCloseRef.current = true;
+      // Set flag to keep FocusCard hidden after save operation
+      shouldStayHiddenRef.current = true;
+      setSuppressFocusRestore(true);
       setToast({ type: "success", msg: "Metadata berhasil disimpan." });
+
+      // Auto-close FocusCard when save is initiated and keep it hidden
+      setTimeout(() => {
+        setSuppressFocusRestore(true);
+        setFocus(null);
+        console.log(
+          "FocusCard: Closed after save, will stay hidden during reload"
+        );
+      }, 100);
 
       const resolvedLayerIdStr = String(
         rlayer ??
@@ -653,6 +704,9 @@ export default function FocusCard() {
 
       if (propsForFocus) {
         syncFocusWithProps(propsForFocus, resolvedLayerIdStr);
+        if (shouldStayHiddenRef.current) {
+          setSuppressFocusRestore(true);
+        }
       }
 
       if (!shouldReloadLayer) {
@@ -701,6 +755,14 @@ export default function FocusCard() {
       }
       if (featureIdStr) {
         openIdRef.current = featureIdStr;
+      }
+
+      if (shouldStayHiddenRef.current) {
+        console.log(
+          "FocusCard: Layer reloaded but FocusCard should remain hidden; skipping focus sync"
+        );
+        setSuppressFocusRestore(true);
+        return;
       }
 
       if (props) {
@@ -867,8 +929,7 @@ export default function FocusCard() {
         });
 
         const updatedFeature = await metadataEditor.actions.saveChanges({
-          onProgress: (progress, message) =>
-            updateProgress(progress, message),
+          onProgress: (progress, message) => updateProgress(progress, message),
         });
 
         if (!updatedFeature) {
@@ -902,11 +963,7 @@ export default function FocusCard() {
         )?.attributeValue;
 
         const propsForFocus = {
-          id: String(
-            updatedFeature.id ??
-              (focus as { id?: string })?.id ??
-              ""
-          ),
+          id: String(updatedFeature.id ?? (focus as { id?: string })?.id ?? ""),
           name:
             updatedNameFromAttributes ||
             metadataEditor.state.namaWilayah ||
@@ -954,8 +1011,7 @@ export default function FocusCard() {
       } else {
         // Local feature: use direct save method
         const updatedFeature = await metadataEditor.actions.saveChanges({
-          onProgress: (progress, message) =>
-            updateProgress(progress, message),
+          onProgress: (progress, message) => updateProgress(progress, message),
         });
         if (updatedFeature) {
           // Re-enable auto-close after saving
@@ -1175,44 +1231,6 @@ export default function FocusCard() {
                 </div>
               </div>
             )}
-
-            {/* Custom Attributes Display */}
-            {(focus as { _rawAttributes?: SpatialFeatureAttribute[] })
-              ?._rawAttributes &&
-              Array.isArray(
-                (focus as { _rawAttributes?: SpatialFeatureAttribute[] })
-                  ._rawAttributes
-              ) && (
-                <div className="attributes-section">
-                  <div className="attributes-label">
-                    <span className="iconfocuscard">list</span>Atribut Kustom
-                  </div>
-                  <div className="attributes-list">
-                    {(
-                      focus as { _rawAttributes: SpatialFeatureAttribute[] }
-                    )._rawAttributes
-                      .filter((attr) => {
-                        // Filter out system attributes
-                        const systemAttributes = [
-                          "spatialFeature.type",
-                          "spatialFeature.geometry",
-                          "spatialFeature.refWilayah",
-                        ];
-                        return !systemAttributes.includes(attr.attributeKey);
-                      })
-                      .map((attr, index) => (
-                        <div key={index} className="attribute-item">
-                          <div className="attribute-key">
-                            {attr.attributeKey}
-                          </div>
-                          <div className="attribute-value">
-                            {attr.attributeValue}
-                          </div>
-                        </div>
-                      ))}
-                  </div>
-                </div>
-              )}
 
             <div className="action-buttons">
               <button

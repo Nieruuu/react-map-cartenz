@@ -1,6 +1,7 @@
 import { get, patch, del, post } from './client';
 import { toQuery } from './qs';
 import WKT from 'ol/format/WKT';
+import GeoJSON from 'ol/format/GeoJSON';
 
 export type SpatialFeatureAttribute = {
   id: number;
@@ -444,14 +445,54 @@ export function generateUUID(): string {
 }
 
 /**
- * Convert OpenLayers geometry to WKT format
+ * Convert geometry to WKT format
+ * Handles both GeoJSON and OpenLayers geometry objects
  */
 export function geometryToWKT(geometry: any): string | null {
   try {
     const wktFormat = new WKT();
-    // Transform from EPSG:3857 to EPSG:4326 before converting to WKT
-    const geometry4326 = geometry.clone().transform('EPSG:3857', 'EPSG:4326');
-    return wktFormat.writeGeometry(geometry4326);
+    const geoJSONFormat = new GeoJSON();
+    
+    let olGeometry;
+    
+    // Check if it's already an OpenLayers geometry
+    if (geometry && typeof geometry.clone === 'function' && typeof geometry.getType === 'function') {
+      // It's an OpenLayers geometry, use it directly
+      olGeometry = geometry;
+    } else if (geometry && geometry.type && geometry.coordinates) {
+      // It's a GeoJSON geometry, convert to OpenLayers geometry
+      olGeometry = geoJSONFormat.readGeometry(geometry);
+    } else {
+      console.error('Invalid geometry format:', geometry);
+      return null;
+    }
+    
+    // Check if coordinates are already in EPSG:4326 format
+    // EPSG:4326 coordinates should be in longitude (-180 to 180) and latitude (-90 to 90) range
+    const extent = olGeometry.getExtent();
+    const minX = extent[0];
+    const minY = extent[1];
+    const maxX = extent[2];
+    const maxY = extent[3];
+    
+    // If coordinates are within valid EPSG:4326 ranges, assume they're already in 4326
+    const isAlready4326 = (
+      minX >= -180 && maxX <= 180 && // Longitude range
+      minY >= -90 && maxY <= 90    // Latitude range
+    );
+    
+    let finalGeometry;
+    if (isAlready4326) {
+      // Coordinates appear to already be in EPSG:4326, no transformation needed
+      console.log('Coordinates appear to be in EPSG:4326, skipping transformation');
+      finalGeometry = olGeometry;
+    } else {
+      // Transform from EPSG:3857 to EPSG:4326
+      console.log('Transforming coordinates from EPSG:3857 to EPSG:4326');
+      finalGeometry = olGeometry.clone().transform('EPSG:3857', 'EPSG:4326');
+    }
+    
+    return wktFormat.writeGeometry(finalGeometry);
   } catch (error) {
     console.error('Failed to convert geometry to WKT:', error);
     return null;
