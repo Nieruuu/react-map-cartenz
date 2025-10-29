@@ -4,11 +4,18 @@ import "./styles/ui.css";
 import App from "./App.tsx";
 import { auth } from "./lib/api/auth";
 
-// Initialize authentication system on app startup
-auth.initializeAuth().catch(console.error);
+async function bootstrap() {
+  try {
+    await auth.initializeAuth();
+  } catch (error) {
+    console.error("Failed to initialize authentication:", error);
+  }
 
-createRoot(document.getElementById("tax-map")!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>
-);
+  createRoot(document.getElementById("tax-map")!).render(
+    <StrictMode>
+      <App />
+    </StrictMode>
+  );
+}
+
+void bootstrap();
