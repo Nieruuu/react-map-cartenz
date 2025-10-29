@@ -1498,9 +1498,159 @@ export default function TaxMap() {
         // Check if this is an API-loaded feature that needs server-side updates
         const rawAttributes = ft.get("_rawAttributes");
         if (rawAttributes && Array.isArray(rawAttributes)) {
-          // This is an API-loaded feature, use the metadata editor
+          const finalizeFeatureUpdate = (
+            attributes: SpatialFeatureAttribute[],
+            spatialFeatureForEvent?: SpatialFeature
+          ) => {
+            const normalizedAttributes = attributes.map((attr, index) => ({
+              ...attr,
+              attributeIndex:
+                attr.attributeIndex !== undefined
+                  ? attr.attributeIndex
+                  : index,
+            }));
+
+            ft.set(
+              "_rawAttributes",
+              normalizedAttributes.map((attr) => ({ ...attr }))
+            );
+
+            Object.keys(updates).forEach((k) => {
+              if (/^(geometry|geom|the_geom|_geom)$/i.test(k)) return;
+              (ft as any).set(k, (updates as any)[k]);
+            });
+
+            const updatedNameFromAttributes = normalizedAttributes.find(
+              (attr) => attr.attributeKey === "spatialFeature.refWilayah"
+            )?.attributeValue;
+
+            if (updatedNameFromAttributes) {
+              (ft as any).set("name", updatedNameFromAttributes);
+            } else if (updates["spatialFeature.refWilayah"]) {
+              (ft as any).set("name", updates["spatialFeature.refWilayah"]);
+            }
+
+            (le.layer as any).changed?.();
+
+            const updatedProps = {
+              id: ft.get("id"),
+              name:
+                updatedNameFromAttributes ||
+                (ft.get("name") as string) ||
+                (updates["spatialFeature.refWilayah"] as string) ||
+                "",
+              _rawAttributes: normalizedAttributes.map((attr) => ({
+                ...attr,
+              })),
+            };
+
+            const currentFocus = useMapStore.getState().focus;
+            if (
+              currentFocus &&
+              String((currentFocus as any)?.id ?? "") === String(id)
+            ) {
+              const { setFocus } = useMapStore.getState();
+              setFocus({
+                ...(currentFocus as any),
+                name: updatedProps.name || (currentFocus as any)?.name || "",
+                _rawAttributes: updatedProps._rawAttributes,
+              });
+            }
+
+            window.dispatchEvent(
+              new CustomEvent("feature-props-applied", {
+                detail: {
+                  id,
+                  layerId: le.id,
+                  updates,
+                  deletes,
+                  reloadLayer,
+                  updatedProps,
+                  updatedRawAttributes: updatedProps._rawAttributes,
+                  updatedSpatialFeature: spatialFeatureForEvent,
+                },
+              })
+            );
+
+            if (reloadLayer) {
+              console.log(
+                "TaxMap: reloadLayer is true, initiating layer reload process"
+              );
+              try {
+                const layerEntry = useLayersStore
+                  .getState()
+                  .layers.find((l) => l.id === le.id);
+                console.log(
+                  "TaxMap: Found layer entry:",
+                  layerEntry
+                    ? {
+                        id: layerEntry.id,
+                        name: layerEntry.name,
+                        kind: layerEntry.kind,
+                        typeCode: layerEntry.typeCode,
+                      }
+                    : null
+                );
+
+                if (layerEntry) {
+                  const typeAttribute = normalizedAttributes.find(
+                    (attr) => attr.attributeKey === "spatialFeature.type"
+                  );
+                  const typeCode = typeAttribute?.attributeValue;
+                  console.log(
+                    "TaxMap: Extracted typeCode from rawAttributes:",
+                    typeCode
+                  );
+
+                  if (typeCode) {
+                    console.log(
+                      `TaxMap: Dispatching reload-api-layer event for ${le.id} with type ${typeCode}`
+                    );
+
+                    const reloadEvent = new CustomEvent("reload-api-layer", {
+                      detail: {
+                        layerId: le.id,
+                        typeCode,
+                        featureId: id,
+                        forceRefresh: true,
+                        updateUI: true,
+                      },
+                    });
+                    console.log(
+                      "TaxMap: reload-api-layer event detail:",
+                      reloadEvent.detail
+                    );
+                    window.dispatchEvent(reloadEvent);
+                  } else {
+                    console.error(
+                      "TaxMap: No typeCode found in rawAttributes"
+                    );
+                  }
+                } else {
+                  console.error(
+                    `TaxMap: Layer entry ${le.id} not found in store`
+                  );
+                }
+              } catch (reloadError) {
+                console.error("TaxMap: Error reloading layer:", reloadError);
+                window.dispatchEvent(
+                  new CustomEvent("layer-reload-error", {
+                    detail: {
+                      id,
+                      layerId: le.id,
+                      error: "Failed to reload layer after save",
+                    },
+                  })
+                );
+              }
+            } else {
+              console.log(
+                "TaxMap: reloadLayer is false, skipping layer reload"
+              );
+            }
+          };
+
           try {
-            // Create a SpatialFeature object from the current feature data
             const spatialFeature = {
               id: parseInt(String(id)),
               systemId: 0,
@@ -1517,10 +1667,8 @@ export default function TaxMap() {
               updatedAt: 0,
             };
 
-            // Update the spatialFeature with the changes from the editor
             Object.keys(updates).forEach((key) => {
               if (key === "spatialFeature.refWilayah") {
-                // Update the refWilayah attribute
                 const refWilayahAttr = rawAttributes.find(
                   (attr: any) =>
                     attr.attributeKey === "spatialFeature.refWilayah"
@@ -1529,16 +1677,14 @@ export default function TaxMap() {
                   refWilayahAttr.attributeValue = updates[key];
                 }
               } else if (key.startsWith("spatialFeature.")) {
-                // Update other spatialFeature attributes
                 const attr = rawAttributes.find(
                   (a: any) => a.attributeKey === key
                 );
                 if (attr) {
                   attr.attributeValue = updates[key];
                 } else {
-                  // Add new attribute
                   rawAttributes.push({
-                    id: 0, // New attribute
+                    id: 0,
                     attributeKey: key,
                     attributeValue: updates[key],
                     attributeLabel: key,
@@ -1548,7 +1694,6 @@ export default function TaxMap() {
               }
             });
 
-            // Handle deletions
             deletes.forEach((key: string) => {
               if (key.startsWith("spatialFeature.")) {
                 const index = rawAttributes.findIndex(
@@ -1560,194 +1705,37 @@ export default function TaxMap() {
               }
             });
 
-            // Start editing with the metadata editor
+            const { skipServerUpdate = false, updatedFeature, updatedRawAttributes } =
+              (ev as CustomEvent<any>).detail || {};
+
+            if (skipServerUpdate && updatedFeature) {
+              const attributesFromEvent = Array.isArray(updatedRawAttributes)
+                ? (updatedRawAttributes as SpatialFeatureAttribute[])
+                : Array.isArray(updatedFeature.attribute)
+                ? (updatedFeature.attribute as SpatialFeatureAttribute[])
+                : (rawAttributes as SpatialFeatureAttribute[]);
+
+              finalizeFeatureUpdate(attributesFromEvent, updatedFeature);
+              break;
+            }
+
             metadataEditor.actions.startEditing(spatialFeature);
 
-            // Save changes to the server
-            const success = await metadataEditor.actions.saveChanges();
+            const updatedFeatureFromEditor =
+              await metadataEditor.actions.saveChanges();
 
-            if (success) {
-              const updatedFeatureFromEditor: SpatialFeature | null =
-                metadataEditor.state.originalFeature
-                  ? {
-                      ...metadataEditor.state.originalFeature,
-                      attribute:
-                        metadataEditor.state.originalFeature.attribute?.map(
-                          (attr) => ({ ...attr })
-                        ) ?? [],
-                    }
-                  : null;
+            if (updatedFeatureFromEditor) {
+              const updatedAttributes = Array.isArray(
+                updatedFeatureFromEditor.attribute
+              )
+                ? (updatedFeatureFromEditor.attribute as SpatialFeatureAttribute[])
+                : (rawAttributes as SpatialFeatureAttribute[]);
 
-              const updatedRawAttributes: SpatialFeatureAttribute[] =
-                updatedFeatureFromEditor?.attribute?.map((attr, index) => ({
-                  ...attr,
-                  attributeIndex:
-                    attr.attributeIndex !== undefined
-                      ? attr.attributeIndex
-                      : index,
-                })) ??
-                (Array.isArray(rawAttributes)
-                  ? (rawAttributes as SpatialFeatureAttribute[]).map(
-                      (attr, index) => ({
-                        ...attr,
-                        attributeIndex:
-                          (attr as any).attributeIndex !== undefined
-                            ? (attr as any).attributeIndex
-                            : index,
-                      })
-                    )
-                  : []);
-
-              // Update the local feature with the new attributes
-              ft.set(
-                "_rawAttributes",
-                updatedRawAttributes.map((attr) => ({ ...attr }))
+              finalizeFeatureUpdate(
+                updatedAttributes,
+                updatedFeatureFromEditor
               );
-
-              // Update local properties
-              Object.keys(updates).forEach((k) => {
-                if (/^(geometry|geom|the_geom|_geom)$/i.test(k)) return;
-                (ft as any).set(k, (updates as any)[k]);
-              });
-
-              // Update id/name if changed
-              const updatedNameFromAttributes = updatedRawAttributes.find(
-                (attr) => attr.attributeKey === "spatialFeature.refWilayah"
-              )?.attributeValue;
-
-              if (updatedNameFromAttributes) {
-                (ft as any).set("name", updatedNameFromAttributes);
-              } else if (updates["spatialFeature.refWilayah"]) {
-                (ft as any).set("name", updates["spatialFeature.refWilayah"]);
-              }
-
-              (le.layer as any).changed?.();
-
-              const updatedProps = {
-                id: ft.get("id"),
-                name:
-                  updatedNameFromAttributes ||
-                  (ft.get("name") as string) ||
-                  (updates["spatialFeature.refWilayah"] as string) ||
-                  "",
-                _rawAttributes: updatedRawAttributes.map((attr) => ({
-                  ...attr,
-                })),
-              };
-
-              const currentFocus = useMapStore.getState().focus;
-              if (
-                currentFocus &&
-                String((currentFocus as any)?.id ?? "") === String(id)
-              ) {
-                const { setFocus } = useMapStore.getState();
-                setFocus({
-                  ...(currentFocus as any),
-                  name: updatedProps.name || (currentFocus as any)?.name || "",
-                  _rawAttributes: updatedProps._rawAttributes,
-                });
-              }
-
-              // Emit success event with updated data for downstream consumers
-              window.dispatchEvent(
-                new CustomEvent("feature-props-applied", {
-                  detail: {
-                    id,
-                    layerId: le.id,
-                    updates,
-                    deletes,
-                    reloadLayer,
-                    updatedProps,
-                    updatedRawAttributes: updatedProps._rawAttributes,
-                    updatedSpatialFeature:
-                      updatedFeatureFromEditor || undefined,
-                  },
-                })
-              );
-
-              // Handle layer reload if requested
-              if (reloadLayer) {
-                console.log(
-                  "TaxMap: reloadLayer is true, initiating layer reload process"
-                );
-                try {
-                  // Find the layer entry to reload
-                  const layerEntry = useLayersStore
-                    .getState()
-                    .layers.find((l) => l.id === le.id);
-                  console.log(
-                    "TaxMap: Found layer entry:",
-                    layerEntry
-                      ? {
-                          id: layerEntry.id,
-                          name: layerEntry.name,
-                          kind: layerEntry.kind,
-                          typeCode: layerEntry.typeCode,
-                        }
-                      : null
-                  );
-
-                  if (layerEntry) {
-                    // Get the type code from the layer's raw attributes
-                    const typeAttribute = rawAttributes.find(
-                      (attr: any) => attr.attributeKey === "spatialFeature.type"
-                    );
-                    const typeCode = typeAttribute?.attributeValue;
-                    console.log(
-                      "TaxMap: Extracted typeCode from rawAttributes:",
-                      typeCode
-                    );
-
-                    if (typeCode) {
-                      console.log(
-                        `TaxMap: Dispatching reload-api-layer event for ${le.id} with type ${typeCode}`
-                      );
-
-                      // Dispatch event to reload the layer with enhanced details
-                      const reloadEvent = new CustomEvent("reload-api-layer", {
-                        detail: {
-                          layerId: le.id,
-                          typeCode,
-                          featureId: id,
-                          forceRefresh: true, // Force complete layer refresh
-                          updateUI: true, // Update all UI components
-                        },
-                      });
-                      console.log(
-                        "TaxMap: reload-api-layer event detail:",
-                        reloadEvent.detail
-                      );
-                      window.dispatchEvent(reloadEvent);
-                    } else {
-                      console.error(
-                        "TaxMap: No typeCode found in rawAttributes"
-                      );
-                    }
-                  } else {
-                    console.error(
-                      `TaxMap: Layer entry ${le.id} not found in store`
-                    );
-                  }
-                } catch (reloadError) {
-                  console.error("TaxMap: Error reloading layer:", reloadError);
-                  // Emit reload error event
-                  window.dispatchEvent(
-                    new CustomEvent("layer-reload-error", {
-                      detail: {
-                        id,
-                        layerId: le.id,
-                        error: "Failed to reload layer after save",
-                      },
-                    })
-                  );
-                }
-              } else {
-                console.log(
-                  "TaxMap: reloadLayer is false, skipping layer reload"
-                );
-              }
             } else {
-              // Emit error event
               window.dispatchEvent(
                 new CustomEvent("feature-props-error", {
                   detail: {

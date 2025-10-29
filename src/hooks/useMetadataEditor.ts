@@ -39,7 +39,7 @@ export type UseMetadataEditorReturn = {
   actions: {
     startEditing: (feature: SpatialFeature) => void;
     cancelEditing: () => void;
-    saveChanges: () => Promise<boolean>;
+    saveChanges: () => Promise<SpatialFeature | null>;
     updateNamaWilayah: (value: string) => void;
     updateIdWilayah: (value: string) => void;
     updateAttribute: (id: string, field: keyof EditableAttribute, value: unknown) => void;
@@ -292,12 +292,12 @@ export function useMetadataEditor(): UseMetadataEditorReturn {
     });
   }, []);
 
-  const saveChanges = useCallback(async (): Promise<boolean> => {
-    if (!state.featureId || !state.originalFeature) return false;
+  const saveChanges = useCallback(async (): Promise<SpatialFeature | null> => {
+    if (!state.featureId || !state.originalFeature) return null;
 
     // Validate all attributes first
     if (!validateAll()) {
-      return false;
+      return null;
     }
 
     setState(prev => ({ ...prev, isLoading: true }));
@@ -475,7 +475,7 @@ export function useMetadataEditor(): UseMetadataEditorReturn {
         validationErrors: {},
       });
 
-      return true;
+      return updatedFeature;
     } catch (error) {
       console.error('Failed to save metadata:', error);
       
@@ -499,7 +499,7 @@ export function useMetadataEditor(): UseMetadataEditorReturn {
       alert(errorMessage);
 
       setState(prev => ({ ...prev, isLoading: false }));
-      return false;
+      return null;
     }
   }, [state, validateAll]);
 
