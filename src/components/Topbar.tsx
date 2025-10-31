@@ -79,11 +79,7 @@ export default function Topbar() {
   return (
     <div className="topbar">
       <div className="brand">
-        <img
-          src="public/smart-gov-revenue-small.png"
-          alt="Logo"
-          className="logo"
-        />
+        <img src="/smart-gov-revenue-small.png" alt="Logo" className="logo" />
         <span>SmartGov Revenue</span>
       </div>
 
@@ -116,10 +112,6 @@ export default function Topbar() {
           onClick={openInGoogleMaps}
         >
           <span className="iconlayers">map</span>
-        </button>
-
-        <button className="iconbtn" title="Download">
-          <span className="icon">download</span>
         </button>
       </div>
 

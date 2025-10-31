@@ -1,6 +1,6 @@
 // src/lib/config.ts
 // Environment-based configuration using .env variables
-const PROD_BASE = import.meta.env.VITE_API_BASE_URL || 'https://retfw.smartgov.id/framework';
+const PROD_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
 const DEV_PROXY = import.meta.env.VITE_API_PROXY_URL || '/api';
 
 export const API_BASE_URL = import.meta.env.DEV ? DEV_PROXY : PROD_BASE;
@@ -17,9 +17,14 @@ export const ENABLE_FEATURE_GROUPS = import.meta.env.VITE_ENABLE_FEATURE_GROUPS 
 export const AUTH_AUTO_LOGIN = import.meta.env.VITE_AUTH_AUTO_LOGIN !== 'false';
 export const AUTH_REFRESH_ENABLED = import.meta.env.VITE_AUTH_REFRESH_ENABLED !== 'false';
 
-// Dev-only defaults for quick smoke tests. Jangan bawa ke produksi.
-export const DEFAULT_USER = import.meta.env.DEV ? 'sa' : '';
-export const DEFAULT_PASS = import.meta.env.DEV ? 'pass@word1' : '';
+// Default credentials can be provided via environment variables. We only fall back to
+// the built-in dev credentials when running the Vite dev server.
+const envDefaultUser = import.meta.env.VITE_AUTH_DEFAULT_USER;
+const envDefaultPass = import.meta.env.VITE_AUTH_DEFAULT_PASS;
+export const DEFAULT_USER =
+  envDefaultUser !== undefined ? envDefaultUser : (import.meta.env.DEV ? 'sa' : '');
+export const DEFAULT_PASS =
+  envDefaultPass !== undefined ? envDefaultPass : (import.meta.env.DEV ? 'pass@word1' : '');
 
 // API endpoint configuration
 export const API_ENDPOINTS = {

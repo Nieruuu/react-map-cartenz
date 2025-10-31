@@ -1,4 +1,5 @@
 import { listSpatialFeatures, type SpatialFeature } from '../lib/api/spatialFeature';
+import { auth } from '../lib/api/auth';
 import { simpleWKTToFeature } from '../lib/geo/simpleWKTConverter';
 import { transformSpatialFeatures, type TransformOptions } from '../lib/api/transformers';
 import VectorLayer from 'ol/layer/Vector';
@@ -191,16 +192,43 @@ function getLayerNameForType(typeCode: string): string {
  */
 export async function loadBatasKecamatanKabupatenBadung() {
   try {
-    // Import the function dynamically to avoid circular dependencies
-    const { getBatasKecamatanKabupatenBadung } = await import('../lib/api/spatialFeature');
-    
-    // Fetch the specific layer data
-    const resp = await getBatasKecamatanKabupatenBadung({
-      pageNumber: 1,
-      pageSize: 1000, // Load all features for this layer
-    });
+    const fetchLayer = async (forceReauth = false) => {
+      try {
+        await auth.ensureAuthenticated(forceReauth);
+      } catch (authError) {
+        console.error('Authentication error while preparing layer load:', authError);
+        if (!forceReauth) {
+          // Retry once with a forced token refresh
+          return fetchLayer(true);
+        }
+        throw authError;
+      }
 
-    if (!resp.data || resp.data.length === 0) {
+      const { getBatasKecamatanKabupatenBadung } = await import('../lib/api/spatialFeature');
+      return getBatasKecamatanKabupatenBadung({
+        pageNumber: 1,
+        pageSize: 1000,
+      });
+    };
+
+    let resp = await fetchLayer(false);
+
+    if (!Array.isArray(resp?.data) || resp.data.length === 0) {
+      const apiMessage = (resp as unknown as { message?: string })?.message;
+      if (apiMessage) {
+        console.warn('Spatial feature API message:', apiMessage);
+      }
+      console.warn(
+        'No features returned on initial load, retrying after refreshing authentication token...'
+      );
+      resp = await fetchLayer(true);
+    }
+
+    if (!Array.isArray(resp?.data) || resp.data.length === 0) {
+      const apiMessage = (resp as unknown as { message?: string })?.message;
+      if (apiMessage) {
+        console.warn('Spatial feature API message:', apiMessage);
+      }
       console.warn('No features found for "Batas Kecamatan Kabupaten Badung" layer');
       return null;
     }
@@ -208,29 +236,32 @@ export async function loadBatasKecamatanKabupatenBadung() {
     const source = new VectorSource();
     let count = 0;
 
-    // Transform features using the transformer with appropriate options
     const transformOptions: TransformOptions = {
-      includeSystemFields: false, // Only include id and name for compatibility
-      includeRawAttributes: true, // Include _rawAttributes for FocusCard editing
+      includeSystemFields: false,
+      includeRawAttributes: true,
       flattenAttributes: true,
     };
-    
+
     const transformedFeatures = transformSpatialFeatures(resp.data, transformOptions);
 
     for (const transformedFeature of transformedFeatures) {
-      // Skip features without geometry
       if (!transformedFeature.geometry) {
         console.warn('No geometry found for feature:', transformedFeature.id);
         continue;
       }
-      
-      // Use simple WKT conversion
-      const olFeature = simpleWKTToFeature(transformedFeature.geometry, transformedFeature.properties);
+
+      const olFeature = simpleWKTToFeature(
+        transformedFeature.geometry,
+        transformedFeature.properties
+      );
       if (!olFeature) {
-        console.error('WKT conversion failed for:', transformedFeature.geometry.substring(0, 50) + '...');
+        console.error(
+          'WKT conversion failed for:',
+          transformedFeature.geometry.substring(0, 50) + '...'
+        );
         continue;
       }
-      
+
       source.addFeature(olFeature);
       count++;
     }
@@ -240,7 +271,6 @@ export async function loadBatasKecamatanKabupatenBadung() {
       return null;
     }
 
-    // Style configuration matching the original kecamatan style
     const cfg = {
       borderColor: '#10b981',
       borderOpacity: 1,
@@ -259,11 +289,11 @@ export async function loadBatasKecamatanKabupatenBadung() {
     const layer = new VectorLayer({ source, style: styleFromCfg(cfg) });
     (layer as any).set('appKind', 'kecamatan');
     (layer as any).set('appName', 'Batas Kecamatan Kabupaten Badung');
-    
-    const id = `kecamatan-${Date.now()}`;
+
+    const id = 'kecamatan-' + Date.now();
     const name = 'Batas Kecamatan Kabupaten Badung';
     const addLayer = useLayersStore.getState().addLayer;
-    
+
     addLayer({
       id,
       name,
@@ -271,7 +301,7 @@ export async function loadBatasKecamatanKabupatenBadung() {
       visible: true,
       layer,
       styleCfg: cfg,
-      typeCode: 'Batas Kecamatan Kabupaten Badung'
+      typeCode: 'Batas Kecamatan Kabupaten Badung',
     });
 
     return { id, name, count };
@@ -280,3 +310,5 @@ export async function loadBatasKecamatanKabupatenBadung() {
     return null;
   }
 }
+
+

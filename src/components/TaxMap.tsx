@@ -847,9 +847,6 @@ export default function TaxMap() {
         updateProgress(85);
         startLoading("Menampilkan peta...");
 
-        // Add the layer to the map
-        map.addLayer(layerEntry.layer);
-
         // Get the source to access features
         const src = layerEntry.layer.getSource();
         if (!src) {

@@ -2936,6 +2936,17 @@ export default function LeftDock() {
           }
 
           // Use target layer's typeCode for the spatialFeature.type attribute
+          const layerTypeValue =
+            targetLayerForAdd.typeCode?.trim() ||
+            formData[i]?.layerType ||
+            "";
+
+          // Ensure the form entry carries the layer type so downstream logic can use it
+          formData[i] = {
+            layerType: layerTypeValue,
+            regionName: formData[i]?.regionName || "",
+          };
+
           const payload = {
             identifier: "spatialFeature.uuid",
             label: "uuid",
@@ -2946,7 +2957,7 @@ export default function LeftDock() {
                 attributeKey: "spatialFeature.type",
                 attributeLabel: "Type",
                 attributeValueType: 1,
-                attributeValue: targetLayerForAdd.typeCode || "",
+                attributeValue: layerTypeValue,
                 status: 1,
               },
               {
@@ -2976,7 +2987,7 @@ export default function LeftDock() {
           const databaseId = createdFeature.id;
           feature.set("id", String(databaseId));
           feature.set("name", formData[i]?.regionName || "");
-          feature.set("layerType", targetLayerForAdd.typeCode || "");
+          feature.set("layerType", layerTypeValue);
           feature.set("regionName", formData[i]?.regionName || "");
           feature.set("_rawAttributes", createdFeature.attribute || []);
 
@@ -2987,8 +2998,10 @@ export default function LeftDock() {
           });
         }
 
-        // Add features to the existing layer
-        if (targetLayerForAdd && targetLayerForAdd.layer) {
+        const targetTypeCode = (targetLayerForAdd.typeCode || "").trim();
+        const isApiLayerTarget = targetTypeCode.length > 0;
+
+        if (!isApiLayerTarget && targetLayerForAdd && targetLayerForAdd.layer) {
           const targetLayerSource = (
             targetLayerForAdd.layer as VectorLayer<VectorSource>
           ).getSource();
@@ -2997,18 +3010,22 @@ export default function LeftDock() {
               targetLayerSource.addFeature(feature);
             });
           }
-        }
 
-        if (savedEntries.length > 0) {
-          flash(
-            `Berhasil menambah ${savedEntries.length} feature ke layer "${targetLayerForAdd.name}"`,
-            "ok"
-          );
-        }
+          if (savedEntries.length > 0) {
+            flash(
+              "Berhasil menambah " +
+                savedEntries.length +
+                ' feature ke layer "' +
+                targetLayerForAdd.name +
+                '"',
+              "ok"
+            );
+          }
 
-        setShowDrawingForm(false);
-        stopAll();
-        return;
+          setShowDrawingForm(false);
+          stopAll();
+          return;
+        }
       }
 
       if (pendingMultiMode) {
