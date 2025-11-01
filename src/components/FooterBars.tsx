@@ -12,7 +12,7 @@ export default function FooterBars() {
       {/* kanan bawah – scale & tombol biru */}
       <div className="footerbar">
         <div className="scale">
-          <span>{Math.round(safeZoom)}z</span>
+          <span>{Math.round(safeZoom)}zoom</span>
           <span>{scaleText}</span>
         </div>
       </div>
