@@ -1,4 +1,4 @@
-﻿// src/components/LeftDock.tsx
+// src/components/LeftDock.tsx
 import { useRef, useState, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import VectorLayer from "ol/layer/Vector";
@@ -528,6 +528,7 @@ export default function LeftDock() {
     layer: VectorLayer<VectorSource>;
     name: string;
     kind: Kind;
+    mode?: "polygon" | "multipolygon";
   } | null>(null);
 
   // Vertex/hover
@@ -558,6 +559,7 @@ export default function LeftDock() {
   const [uiMode, setUIMode] = useState<
     "idle" | "draw" | "modify" | "translate" | "translateLayer" | "addToLayer"
   >("idle");
+  const isAddToLayerActive = uiMode === "addToLayer";
 
   // Feature click detection for automatic layer selection
   useEffect(() => {
@@ -611,6 +613,61 @@ export default function LeftDock() {
 
   const [isMultiMode, setIsMultiMode] = useState(false);
   const [pendingMultiMode, setPendingMultiMode] = useState(false);
+  const [showAddToLayerModeModal, setShowAddToLayerModeModal] = useState(false);
+  const [addToLayerMode, setAddToLayerMode] = useState<"polygon" | "multipolygon">("polygon");
+  const addToLayerModalRef = useRef<HTMLDivElement | null>(null);
+  const addToLayerButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  const closeAddToLayerModeDialog = useCallback(() => {
+    setShowAddToLayerModeModal(false);
+    window.setTimeout(() => addToLayerButtonRef.current?.focus?.(), 20);
+  }, []);
+
+  useEffect(() => {
+    if (!showAddToLayerModeModal) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeAddToLayerModeDialog();
+        return;
+      }
+
+      if (event.key === "Tab") {
+        const dialog = addToLayerModalRef.current;
+        if (!dialog) return;
+        const focusable = dialog.querySelectorAll<HTMLElement>(
+          "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])"
+        );
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey) {
+          if (document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+          }
+        } else if (document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+
+    const focusTimer = window.setTimeout(() => {
+      const firstButton = addToLayerModalRef.current?.querySelector<HTMLButtonElement>(
+        "[data-mode]"
+      );
+      firstButton?.focus();
+    }, 30);
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      window.clearTimeout(focusTimer);
+    };
+  }, [showAddToLayerModeModal, closeAddToLayerModeDialog]);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleteInProgress, setIsDeleteInProgress] = useState(false);
 
@@ -1015,28 +1072,8 @@ export default function LeftDock() {
   const [openKey, setOpenKey] = useState<PanelKey | null>("io");
   const isOpen = (k: PanelKey) => openKey === k;
 
-  const initialPanelRef = useRef<PanelKey | null>(openKey);
-  useEffect(() => {
-    if (initialPanelRef.current) {
-      window.dispatchEvent(
-        new CustomEvent("panel-header-click", {
-          detail: { panel: initialPanelRef.current },
-        })
-      );
-    }
-  }, []);
   const onPanelHeaderClick = (k: PanelKey) => {
-    const wasClosed = openKey !== k;
     setOpenKey(openKey === k ? null : k);
-
-    // Dispatch custom event when opening a panel (for FocusCard auto-close)
-    if (wasClosed) {
-      window.dispatchEvent(
-        new CustomEvent("panel-header-click", {
-          detail: { panel: k },
-        })
-      );
-    }
   };
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1607,9 +1644,8 @@ export default function LeftDock() {
 
     const prevTarget = targetFeatureRef.current;
     const prevSelectedId = selectedId;
-    stopAll();
+    stopAll({ preserveFocus: true });
     setBusy(true);
-    setFocus?.(null);
 
     let targetFeature: OLFeature<Geometry> | null = prevTarget || null;
     if (!targetFeature && prevSelectedId) {
@@ -1924,9 +1960,8 @@ export default function LeftDock() {
 
     const prevTarget = targetFeatureRef.current;
     const prevSelectedId = selectedId;
-    stopAll();
+    stopAll({ preserveFocus: true });
     setBusy(true);
-    setFocus?.(null);
     targetLayerFeaturesRef.current = null;
 
     let targetFeature: OLFeature<Geometry> | null = prevTarget || null;
@@ -2103,9 +2138,8 @@ export default function LeftDock() {
     const prevTargetLayer = selectedLayerId;
     const prevTargetFeature = targetFeatureRef.current;
     const prevSelectedId = selectedId;
-    stopAll();
+    stopAll({ preserveFocus: true });
     setBusy(true);
-    setFocus?.(null);
 
     let targetEntry =
       (prevTargetLayer && layers.find((le) => le.id === prevTargetLayer)) ||
@@ -2280,8 +2314,9 @@ export default function LeftDock() {
     }
   };
 
-  const stopAll = () => {
+  const stopAll = (options?: { preserveFocus?: boolean }) => {
     if (!map) return;
+    const { preserveFocus = false } = options ?? {};
     const prev = uiMode;
 
     if (drawSessionRef.current) {
@@ -2323,7 +2358,9 @@ export default function LeftDock() {
     setDeleteVertexOn(false);
     setUIMode("idle");
     setBusy(false);
-    setFocus?.(null);
+    if (!preserveFocus) {
+      setFocus?.(null);
+    }
 
     // Hide drawing workflow UI
     setShowDrawingToolbar(false);
@@ -2331,6 +2368,8 @@ export default function LeftDock() {
     setIsSavingDrawing(false);
     setIsMultiMode(false);
     setPendingMultiMode(false);
+    setShowAddToLayerModeModal(false);
+    setAddToLayerMode("polygon");
 
     // Hide vertex editing modal
     setShowVertexEditingModal(false);
@@ -2366,10 +2405,8 @@ export default function LeftDock() {
       flash("Anda keluar dari mode geser layer");
   };
 
-  const startAddToLayer = () => {
+  const handleAddToLayerButtonClick = () => {
     if (!map || !layers.length) return;
-
-    // Check if user has selected a layer
     const targetLayer = selectedLayerId
       ? layers.find((le) => le.id === selectedLayerId)
       : null;
@@ -2379,13 +2416,37 @@ export default function LeftDock() {
       return;
     }
 
-    // Set the target layer for adding features
-    setTargetLayerForAdd(targetLayer);
+    setAddToLayerMode("polygon");
+    setShowAddToLayerModeModal(true);
+  };
+
+  const handleStartAddPolygon = () => startAddToLayer("polygon");
+  const handleStartAddMultipolygon = () => startAddToLayer("multipolygon");
+
+  const startAddToLayer = (mode: "polygon" | "multipolygon") => {
+    if (!map || !layers.length) return;
+
+    const targetLayer = selectedLayerId
+      ? layers.find((le) => le.id === selectedLayerId)
+      : null;
+
+    if (!targetLayer) {
+      flash("Pilih layer terlebih dahulu sebelum menambah feature", "err");
+      closeAddToLayerModeDialog();
+      return;
+    }
+
+    const isMulti = mode === "multipolygon";
+    closeAddToLayerModeDialog();
 
     // Start drawing workflow with target layer context
     stopAll();
     setBusy(true);
     setFocus?.(null);
+    setTargetLayerForAdd(targetLayer);
+    setAddToLayerMode(mode);
+    setPendingMultiMode(isMulti);
+    setIsMultiMode(isMulti);
 
     const currType = targetLayer.typeCode || DEFAULT_DRAW_KIND;
     const plannedName = targetLayer.name || `Feature ke ${targetLayer.name}`;
@@ -2405,7 +2466,8 @@ export default function LeftDock() {
       layer: sessionLayer,
       name: plannedName,
       kind: currType as Kind,
-    };
+      mode,
+    } as typeof drawSessionRef.current;
 
     // Create sketch layer for drawing
     const sketchSrc = new VectorSource();
@@ -2423,7 +2485,11 @@ export default function LeftDock() {
 
     // Setup drawing interaction
     const draw = new Draw({ source: sketchSrc, type: "Polygon" });
-    draw.on("drawstart", () => sketchSrc.clear());
+    draw.on("drawstart", () => {
+      if (!isMulti) {
+        sketchSrc.clear();
+      }
+    });
     draw.on("drawend", (event) => {
       const session = drawSessionRef.current!;
       if (!session) return;
@@ -2440,13 +2506,14 @@ export default function LeftDock() {
       session.src.addFeature(clone);
       sketchSrc.clear();
 
-      // Show drawing toolbar when first polygon is drawn
       if (!showDrawingToolbar) {
         setShowDrawingToolbar(true);
       }
 
       flash(
-        "Polygon ditambahkan. Klik Selesai untuk menyimpan ke layer yang dipilih."
+        isMulti
+          ? "Bagian MultiPolygon ditambahkan. Lanjutkan menggambar atau klik Selesai."
+          : "Polygon ditambahkan. Klik Selesai untuk menyimpan ke layer yang dipilih."
       );
     });
 
@@ -2455,10 +2522,12 @@ export default function LeftDock() {
     attachSnapsForDraw();
     setUIMode("addToLayer");
 
-    // Show drawing toolbar immediately when entering add to layer mode
+    if (isMulti) {
+      flash("Mode MultiPolygon aktif. Gambar beberapa polygon lalu klik Selesai.", "ok");
+    }
+
     setShowDrawingToolbar(true);
 
-    // Add visual feedback during drawing mode
     if (map) {
       map.getTargetElement().style.cursor = "crosshair";
       map.getTargetElement().style.backgroundColor = "rgba(34, 197, 94, 0.05)";
@@ -2952,29 +3021,61 @@ export default function LeftDock() {
           targetLayerForAdd.name
         );
 
-        for (let i = 0; i < features.length; i++) {
-          const feature = features[i];
-          const geometry = feature.getGeometry();
+        const featuresToAdd: OLFeature<Geometry>[] = [];
 
-          if (!geometry) {
-            console.warn(`Feature ${i} has no geometry`);
-            continue;
+        if (addToLayerMode === "multipolygon") {
+          const combinedCoords: PolygonRings[] = [];
+
+          features.forEach((feature, index) => {
+            const geometry = feature.getGeometry();
+            if (!geometry) {
+              console.warn(`Feature ${index} has no geometry`);
+              return;
+            }
+
+            const geomType = geometry.getType();
+            if (geomType === "Polygon") {
+              combinedCoords.push(
+                (geometry as Polygon).getCoordinates() as unknown as PolygonRings
+              );
+            } else if (geomType === "MultiPolygon") {
+              (geometry as MultiPolygon)
+                .getCoordinates()
+                .forEach((coords) =>
+                  combinedCoords.push(coords as unknown as PolygonRings)
+                );
+            } else {
+              console.warn(
+                `[Drawing] Unsupported geometry type "${geomType}" encountered while building MultiPolygon`
+              );
+            }
+          });
+
+          if (!combinedCoords.length) {
+            throw new Error("Tidak ada polygon valid untuk MultiPolygon");
           }
 
-          const wktGeometry = geometryToWKT(geometry);
+          const multiGeometry = new MultiPolygon(combinedCoords);
+          const wktGeometry = geometryToWKT(multiGeometry);
+
           if (!wktGeometry) {
-            throw new Error(`Failed to convert polygon ${i} to WKT format`);
+            throw new Error("Gagal mengubah MultiPolygon ke format WKT");
           }
 
-          // Use target layer's typeCode for the spatialFeature.type attribute
-          const layerTypeValue =
-            targetLayerForAdd.typeCode?.trim() || formData[i]?.layerType || "";
-
-          // Ensure the form entry carries the layer type so downstream logic can use it
-          formData[i] = {
-            layerType: layerTypeValue,
-            regionName: formData[i]?.regionName || "",
+          const formEntry = formData[0] ?? {
+            layerType: targetLayerForAdd.typeCode || "",
+            regionName: "",
           };
+
+          const layerTypeValue =
+            targetLayerForAdd.typeCode?.trim() || formEntry.layerType || "";
+
+          const normalizedFormEntry = {
+            layerType: layerTypeValue,
+            regionName: formEntry.regionName || "",
+          };
+
+          formData[0] = normalizedFormEntry;
 
           const payload = {
             identifier: "spatialFeature.uuid",
@@ -3000,53 +3101,123 @@ export default function LeftDock() {
                 attributeKey: "spatialFeature.refWilayah",
                 attributeLabel: "Ref Wilayah",
                 attributeValueType: 1,
-                attributeValue: formData[i]?.regionName || "",
+                attributeValue: formEntry.regionName || "",
                 status: 1,
               },
             ],
           };
 
-          console.log(
-            `Creating spatial feature ${i + 1} for existing layer:`,
-            payload
-          );
-
           const createdFeature = await createSpatialFeature(payload);
 
-          const databaseId = createdFeature.id;
-          feature.set("id", String(databaseId));
-          feature.set("name", formData[i]?.regionName || "");
-          feature.set("layerType", layerTypeValue);
-          feature.set("regionName", formData[i]?.regionName || "");
-          feature.set("_rawAttributes", createdFeature.attribute || []);
+          const combinedFeature = new OLFeature<Geometry>(
+            multiGeometry.clone()
+          );
+          combinedFeature.set("id", String(createdFeature.id));
+          combinedFeature.set("name", normalizedFormEntry.regionName || "");
+          combinedFeature.set("layerType", layerTypeValue);
+          combinedFeature.set("regionName", normalizedFormEntry.regionName || "");
+          combinedFeature.set("_rawAttributes", createdFeature.attribute || []);
+          combinedFeature.set("_sessionParts", features.length);
 
           savedEntries.push({
-            feature,
-            form: formData[i],
+            feature: combinedFeature,
+            form: normalizedFormEntry,
             api: createdFeature,
           });
+
+          featuresToAdd.push(combinedFeature);
+        } else {
+          for (let i = 0; i < features.length; i++) {
+            const feature = features[i];
+            const geometry = feature.getGeometry();
+
+            if (!geometry) {
+              console.warn(`Feature ${i} has no geometry`);
+              continue;
+            }
+
+            const wktGeometry = geometryToWKT(geometry);
+            if (!wktGeometry) {
+              throw new Error(`Failed to convert polygon ${i} to WKT format`);
+            }
+
+            const layerTypeValue =
+              targetLayerForAdd.typeCode?.trim() || formData[i]?.layerType || "";
+
+            formData[i] = {
+              layerType: layerTypeValue,
+              regionName: formData[i]?.regionName || "",
+            };
+
+            const payload = {
+              identifier: "spatialFeature.uuid",
+              label: "uuid",
+              value: generateUUID(),
+              status: 1,
+              attribute: [
+                {
+                  attributeKey: "spatialFeature.type",
+                  attributeLabel: "Type",
+                  attributeValueType: 1,
+                  attributeValue: layerTypeValue,
+                  status: 1,
+                },
+                {
+                  attributeKey: "spatialFeature.geometry",
+                  attributeLabel: "Geometry",
+                  attributeValueType: 13,
+                  attributeValue: wktGeometry,
+                  status: 1,
+                },
+                {
+                  attributeKey: "spatialFeature.refWilayah",
+                  attributeLabel: "Ref Wilayah",
+                  attributeValueType: 1,
+                  attributeValue: formData[i]?.regionName || "",
+                  status: 1,
+                },
+              ],
+            };
+
+            const createdFeature = await createSpatialFeature(payload);
+
+            const databaseId = createdFeature.id;
+            feature.set("id", String(databaseId));
+            feature.set("name", formData[i]?.regionName || "");
+            feature.set("layerType", layerTypeValue);
+            feature.set("regionName", formData[i]?.regionName || "");
+            feature.set("_rawAttributes", createdFeature.attribute || []);
+
+            savedEntries.push({
+              feature,
+              form: formData[i],
+              api: createdFeature,
+            });
+
+            featuresToAdd.push(feature);
+          }
         }
 
         const targetTypeCode = (targetLayerForAdd.typeCode || "").trim();
         const isApiLayerTarget = targetTypeCode.length > 0;
 
-        if (!isApiLayerTarget && targetLayerForAdd && targetLayerForAdd.layer) {
+        if (!isApiLayerTarget) {
           const targetLayerSource = (
             targetLayerForAdd.layer as VectorLayer<VectorSource>
           ).getSource();
           if (targetLayerSource) {
-            features.forEach((feature) => {
+            featuresToAdd.forEach((feature) => {
               targetLayerSource.addFeature(feature);
             });
           }
 
           if (savedEntries.length > 0) {
+            const label =
+              addToLayerMode === "multipolygon"
+                ? "MultiPolygon"
+                : "feature";
             flash(
-              "Berhasil menambah " +
-                savedEntries.length +
-                ' feature ke layer "' +
-                targetLayerForAdd.name +
-                '"',
+              `Berhasil menambah ${savedEntries.length} ${label} ke layer "${targetLayerForAdd.name}"`,
               "ok"
             );
           }
@@ -3057,8 +3228,9 @@ export default function LeftDock() {
         }
       }
 
-      if (pendingMultiMode) {
-        const combinedCoords: PolygonRings[] = [];
+      if (uiMode !== "addToLayer") {
+        if (pendingMultiMode) {
+          const combinedCoords: PolygonRings[] = [];
 
         features.forEach((feature, index) => {
           const geometry = feature.getGeometry();
@@ -3209,6 +3381,7 @@ export default function LeftDock() {
             api: createdFeature,
           });
         }
+      }
       }
 
       if (!savedEntries.length) {
@@ -4381,6 +4554,7 @@ export default function LeftDock() {
         <div
           className="ld-header"
           role="button"
+          data-focus-dismiss="true"
           onClick={() => onPanelHeaderClick("draw")}
         >
           <span>Gambar Batas Wilayah</span>
@@ -4502,17 +4676,45 @@ export default function LeftDock() {
                 <span className="icon">delete_forever</span>
               </button>
               <button
+                ref={addToLayerButtonRef}
                 className="circle"
-                title="Tambah feature ke layer yang ada"
-                onClick={startAddToLayer}
-                disabled={uiMode === "addToLayer"}
+                title={
+                  isAddToLayerActive
+                    ? `Sedang menambah ${
+                        addToLayerMode === "multipolygon"
+                          ? "MultiPolygon"
+                          : "Polygon"
+                      } ke layer`
+                    : "Tambah feature ke layer yang ada"
+                }
+                onClick={handleAddToLayerButtonClick}
+                disabled={isAddToLayerActive}
+                aria-pressed={isAddToLayerActive}
                 style={{
-                  background: "#22c55e",
+                  background: isAddToLayerActive
+                    ? addToLayerMode === "multipolygon"
+                      ? "#4f46e5"
+                      : "#22c55e"
+                    : "#22c55e",
                   color: "#fff",
-                  borderColor: "#22c55e",
+                  borderColor: isAddToLayerActive
+                    ? addToLayerMode === "multipolygon"
+                      ? "#4f46e5"
+                      : "#22c55e"
+                    : "#22c55e",
+                  cursor: isAddToLayerActive ? "not-allowed" : "pointer",
+                  opacity: isAddToLayerActive ? 0.8 : 1,
+                  boxShadow: isAddToLayerActive
+                    ? "0 0 0 2px rgba(255,255,255,0.15)"
+                    : "none",
+                  transition: "all 0.2s ease",
                 }}
               >
-                <span className="icon">add_circle</span>
+                <span className="icon">
+                  {isAddToLayerActive && addToLayerMode === "multipolygon"
+                    ? "layers"
+                    : "add_circle"}
+                </span>
               </button>
             </div>
 
@@ -4538,6 +4740,7 @@ export default function LeftDock() {
         <div
           className="ld-header"
           role="button"
+          data-focus-dismiss="true"
           onClick={() => onPanelHeaderClick("basemap")}
         >
           <span>Tipe Peta Dasar</span>
@@ -4584,6 +4787,7 @@ export default function LeftDock() {
         <div
           className="ld-header"
           role="button"
+          data-focus-dismiss="true"
           onClick={() => onPanelHeaderClick("io")}
         >
           <span>Load Peta & Import/Export</span>
@@ -4824,6 +5028,173 @@ export default function LeftDock() {
       />
 
       {/* Drawing Workflow Components */}
+      {showAddToLayerModeModal &&
+        createPortal(
+          <div
+            className="modal-overlay"
+            onClick={closeAddToLayerModeDialog}
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(0,0,0,0.4)",
+              zIndex: 5200,
+              display: "flex",
+              justifyContent: "center",
+              alignItems: "center",
+              animation: "modalOverlayFade 0.2s ease-out",
+            }}
+          >
+            <style>{`
+              @keyframes modalOverlayFade {
+                from { opacity: 0; }
+                to { opacity: 1; }
+              }
+              @keyframes modalDialogScale {
+                from { opacity: 0; transform: translateY(16px) scale(0.96); }
+                to { opacity: 1; transform: translateY(0) scale(1); }
+              }
+            `}</style>
+            <div
+              ref={addToLayerModalRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="add-to-layer-mode-title"
+              aria-describedby="add-to-layer-mode-description"
+              onClick={(event) => event.stopPropagation()}
+              style={{
+                width: "min(90%, 360px)",
+                background: "#ffffff",
+                borderRadius: 16,
+                boxShadow: "0 24px 48px rgba(15,23,42,0.3)",
+                padding: "24px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "16px",
+                animation: "modalDialogScale 0.2s ease-out",
+              }}
+            >
+              <div
+                id="add-to-layer-mode-title"
+                style={{
+                  fontSize: "18px",
+                  fontWeight: 700,
+                  color: "#111827",
+                }}
+              >
+                Pilih Mode Gambar
+              </div>
+              <p
+                id="add-to-layer-mode-description"
+                style={{
+                  margin: 0,
+                  fontSize: "14px",
+                  color: "#4b5563",
+                  lineHeight: 1.6,
+                }}
+              >
+                Tentukan apakah kamu ingin menambah satu Polygon atau membuat MultiPolygon pada layer yang dipilih.
+              </p>
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 12,
+                }}
+              >
+                <button
+                  data-mode="polygon"
+                  onClick={handleStartAddPolygon}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "12px 16px",
+                    borderRadius: 10,
+                    border: "1px solid #d1d5db",
+                    background:
+                      addToLayerMode === "polygon" ? "#f1f5f9" : "#ffffff",
+                    color: "#111827",
+                    fontSize: "14px",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    transition: "all 0.2s ease",
+                  }}
+                >
+                  <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span className="icon">pentagon</span>
+                    Draw Polygon
+                  </span>
+                  <span
+                    style={{
+                      fontSize: "12px",
+                      color: "#64748b",
+                    }}
+                  >
+                    Satu batas area
+                  </span>
+                </button>
+                <button
+                  data-mode="multipolygon"
+                  onClick={handleStartAddMultipolygon}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "12px 16px",
+                    borderRadius: 10,
+                    border: "1px solid #c7d2fe",
+                    background:
+                      addToLayerMode === "multipolygon" ? "#ede9fe" : "#ffffff",
+                    color: "#312e81",
+                    fontSize: "14px",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    transition: "all 0.2s ease",
+                  }}
+                >
+                  <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span className="icon">stack</span>
+                    Draw Multipolygon
+                  </span>
+                  <span
+                    style={{
+                      fontSize: "12px",
+                      color: "#4c1d95",
+                    }}
+                  >
+                    Beberapa area sekaligus
+                  </span>
+                </button>
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "flex-end",
+                  gap: 12,
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={closeAddToLayerModeDialog}
+                  style={{
+                    border: "1px solid #d1d5db",
+                    background: "#fff",
+                    color: "#374151",
+                    borderRadius: 8,
+                    padding: "10px 18px",
+                    fontSize: "14px",
+                    fontWeight: 500,
+                    cursor: "pointer",
+                  }}
+                >
+                  Batal
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
       {showDrawingToolbar && (
         <DrawingToolbar
           onDone={handleDrawingDone}

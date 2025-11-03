@@ -4,6 +4,7 @@ import OLMap from "ol/Map";
 import VectorLayer from "ol/layer/Vector";
 import VectorSource from "ol/source/Vector";
 import { useLayersStore, styleFromCfg } from "../hooks/useLayersStore";
+import { useMapStore } from "../hooks/useMapStore";
 
 export default function RightDock() {
   const { map, layers, moveLayer, setVisible, updateStyleCfg, removeEntry } =
@@ -22,6 +23,7 @@ export default function RightDock() {
 
   // Fokus dari peta
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
+  const focus = useMapStore((s) => s.focus);
 
   // Refs DOM
   const itemRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -116,6 +118,12 @@ export default function RightDock() {
       );
     };
   }, [selectedLayerId]);
+
+  useEffect(() => {
+    if (!focus) {
+      setSelectedLayerId(null);
+    }
+  }, [focus]);
 
   // helper kecil: ambil label dari feature, bukan nama layer
   const pickFeatureLabel = (ft: any, mode: "nama" | "kode", fallback = "") => {

@@ -163,10 +163,19 @@ export const useMapStore = create<S>((set, get) => ({
 
   focus: null,
   setFocus: (f) =>
-    set((state) => ({
-      focus: f,
-      suppressFocusRestore: f ? false : state.suppressFocusRestore,
-    })),
+    set((state) => {
+      const next: Partial<S> = {
+        focus: f,
+        suppressFocusRestore: f ? false : state.suppressFocusRestore,
+      };
+
+      if (!f) {
+        next.selectedId = undefined;
+        next.hoveredId = undefined;
+      }
+
+      return next;
+    }),
   suppressFocusRestore: false,
   setSuppressFocusRestore: (value) => set({ suppressFocusRestore: value }),
 

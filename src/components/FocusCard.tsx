@@ -71,6 +71,19 @@ export default function FocusCard() {
         return;
       }
 
+      const targetNode = event.target as Node | null;
+      if (targetNode) {
+        const leftDockElement = document.querySelector(".leftstack");
+        if (
+          leftDockElement &&
+          leftDockElement.contains(targetNode) &&
+          targetNode instanceof Element &&
+          !targetNode.closest("[data-focus-dismiss='true']")
+        ) {
+          return;
+        }
+      }
+
       // Close FocusCard when interacting with other UI elements
       setFocus(null);
     },
