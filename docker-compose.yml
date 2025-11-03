@@ -2,7 +2,7 @@ services:
   tax-map-app:
     build: .
     ports:
-      - "8080:80"
+      - "8060:80"
     environment:
       - NODE_ENV=production
     restart: unless-stopped
