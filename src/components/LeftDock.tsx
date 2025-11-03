@@ -786,6 +786,12 @@ export default function LeftDock() {
           properties.wilayah ||
           properties.WILAYAH ||
           properties.KECAMATAN ||
+          properties.kecamatan ||
+          properties.D_NM_KEL ||
+          properties.Region ||
+          properties.region ||
+          properties.REGION ||
+          properties.ref_wilayah ||
           properties.REF_WILAYAH;
         if (refWilayahValue) {
           attributes.push({
