@@ -628,7 +628,9 @@ export default function LeftDock() {
 
   const deleteVertexModeRef = useRef(false);
   const [deleteVertexOn, setDeleteVertexOn] = useState(false);
-  const stopAllRef = useRef<(options?: { preserveFocus?: boolean }) => void>(() => {});
+  const stopAllRef = useRef<(options?: { preserveFocus?: boolean }) => void>(
+    () => {}
+  );
 
   const setBusy = (busy: boolean) =>
     window.dispatchEvent(
@@ -694,7 +696,9 @@ export default function LeftDock() {
   const [isMultiMode, setIsMultiMode] = useState(false);
   const [pendingMultiMode, setPendingMultiMode] = useState(false);
   const [showAddToLayerModeModal, setShowAddToLayerModeModal] = useState(false);
-  const [addToLayerMode, setAddToLayerMode] = useState<"polygon" | "multipolygon">("polygon");
+  const [addToLayerMode, setAddToLayerMode] = useState<
+    "polygon" | "multipolygon"
+  >("polygon");
   const addToLayerModalRef = useRef<HTMLDivElement | null>(null);
   const addToLayerButtonRef = useRef<HTMLButtonElement | null>(null);
 
@@ -737,9 +741,10 @@ export default function LeftDock() {
     document.addEventListener("keydown", handleKeyDown);
 
     const focusTimer = window.setTimeout(() => {
-      const firstButton = addToLayerModalRef.current?.querySelector<HTMLButtonElement>(
-        "[data-mode]"
-      );
+      const firstButton =
+        addToLayerModalRef.current?.querySelector<HTMLButtonElement>(
+          "[data-mode]"
+        );
       firstButton?.focus();
     }, 30);
 
@@ -786,7 +791,9 @@ export default function LeftDock() {
 
   const editFeatureDisabled = !hasSelectedFeature || uiMode === "modify";
   const translateFeatureDisabled =
-    !hasSelectedFeature || uiMode === "translate" || uiMode === "translateLayer";
+    !hasSelectedFeature ||
+    uiMode === "translate" ||
+    uiMode === "translateLayer";
   const translateLayerDisabled =
     !hasSelectedLayer || uiMode === "translateLayer" || uiMode === "translate";
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -800,6 +807,24 @@ export default function LeftDock() {
     isTranslateLayerConfirmInProgress,
     setIsTranslateLayerConfirmInProgress,
   ] = useState(false);
+  const [
+    showTranslateFeatureCancelConfirm,
+    setShowTranslateFeatureCancelConfirm,
+  ] = useState(false);
+  const translateFeatureCancelDialogRef = useRef<HTMLDivElement | null>(null);
+  const translateFeatureCancelConfirmButtonRef =
+    useRef<HTMLButtonElement | null>(null);
+  const translateFeatureCancelCancelButtonRef =
+    useRef<HTMLButtonElement | null>(null);
+  const [showTranslateLayerCancelConfirm, setShowTranslateLayerCancelConfirm] =
+    useState(false);
+  const translateLayerCancelDialogRef = useRef<HTMLDivElement | null>(null);
+  const translateLayerCancelConfirmButtonRef = useRef<HTMLButtonElement | null>(
+    null
+  );
+  const translateLayerCancelCancelButtonRef = useRef<HTMLButtonElement | null>(
+    null
+  );
 
   // Add to layer workflow state
   const [targetLayerForAdd, setTargetLayerForAdd] = useState<{
@@ -816,10 +841,7 @@ export default function LeftDock() {
 
   // Vertex editing state
   const [showVertexEditingModal, setShowVertexEditingModal] = useState(false);
-  const [vertexEditingPosition, setVertexEditingPosition] = useState({
-    x: 0,
-    y: 0,
-  });
+  const vertexEditingPosition = useMemo(() => ({ x: 730, y: 150 }), []);
   const [isVertexEditingDirty, setIsVertexEditingDirty] = useState(false);
   const [isSavingVertexEdit, setIsSavingVertexEdit] = useState(false);
   const originalGeometryRef = useRef<string | null>(null);
@@ -829,10 +851,7 @@ export default function LeftDock() {
   // Translate feature state
   const [showTranslateFeatureModal, setShowTranslateFeatureModal] =
     useState(false);
-  const [translateFeaturePosition, setTranslateFeaturePosition] = useState({
-    x: 0,
-    y: 0,
-  });
+  const translateFeaturePosition = useMemo(() => ({ x: 850, y: 150 }), []);
   const [isTranslateFeatureDirty, setIsTranslateFeatureDirty] = useState(false);
   const [isSavingTranslateFeature, setIsSavingTranslateFeature] =
     useState(false);
@@ -840,10 +859,7 @@ export default function LeftDock() {
 
   // Translate layer state
   const [showTranslateLayerModal, setShowTranslateLayerModal] = useState(false);
-  const [translateLayerPosition, setTranslateLayerPosition] = useState({
-    x: 0,
-    y: 0,
-  });
+  const translateLayerPosition = useMemo(() => ({ x: 700, y: 150 }), []);
   const [isTranslateLayerDirty, setIsTranslateLayerDirty] = useState(false);
   const [isSavingTranslateLayer, setIsSavingTranslateLayer] = useState(false);
   const originalLayerGeometriesRef = useRef<Map<string, string> | null>(null);
@@ -2052,29 +2068,7 @@ export default function LeftDock() {
     attachPointerMoveHover();
     setUIMode("modify");
 
-    // Calculate optimal position for the vertex editing modal
-    const mapSize = map.getSize();
-    if (mapSize) {
-      const featureExtent = targetFeature.getGeometry()?.getExtent();
-      if (featureExtent) {
-        const centerX = (featureExtent[0] + featureExtent[2]) / 2;
-        const centerY = (featureExtent[1] + featureExtent[3]) / 2;
-        const centerPixel = map.getPixelFromCoordinate([centerX, centerY]);
-
-        // Position modal near the feature but ensure it's visible on screen
-        const modalX = Math.max(
-          20,
-          Math.min(centerPixel[0] - 140, mapSize[0] - 300)
-        );
-        const modalY = Math.max(
-          80,
-          Math.min(centerPixel[1] - 40, mapSize[1] - 100)
-        );
-
-        setVertexEditingPosition({ x: modalX, y: modalY });
-        setShowVertexEditingModal(true);
-      }
-    }
+    setShowVertexEditingModal(true);
   };
 
   const startMove = () => {
@@ -2229,29 +2223,7 @@ export default function LeftDock() {
     attachPointerMoveHover();
     setUIMode("translate");
 
-    // Calculate optimal position for the translate feature modal
-    const mapSize = map.getSize();
-    if (mapSize) {
-      const featureExtent = targetFeature.getGeometry()?.getExtent();
-      if (featureExtent) {
-        const centerX = (featureExtent[0] + featureExtent[2]) / 2;
-        const centerY = (featureExtent[1] + featureExtent[3]) / 2;
-        const centerPixel = map.getPixelFromCoordinate([centerX, centerY]);
-
-        // Position modal near the feature but ensure it's visible on screen
-        const modalX = Math.max(
-          20,
-          Math.min(centerPixel[0] - 140, mapSize[0] - 300)
-        );
-        const modalY = Math.max(
-          80,
-          Math.min(centerPixel[1] - 40, mapSize[1] - 100)
-        );
-
-        setTranslateFeaturePosition({ x: modalX, y: modalY });
-        setShowTranslateFeatureModal(true);
-      }
-    }
+    setShowTranslateFeatureModal(true);
   };
 
   const startMoveLayer = () => {
@@ -2411,29 +2383,7 @@ export default function LeftDock() {
     targetFeatureRef.current = anchorFeature;
     setUIMode("translateLayer");
 
-    // Calculate optimal position for the translate layer modal
-    const mapSize = map.getSize();
-    if (mapSize) {
-      const featureExtent = anchorFeature.getGeometry()?.getExtent();
-      if (featureExtent) {
-        const centerX = (featureExtent[0] + featureExtent[2]) / 2;
-        const centerY = (featureExtent[1] + featureExtent[3]) / 2;
-        const centerPixel = map.getPixelFromCoordinate([centerX, centerY]);
-
-        // Position modal near the feature but ensure it's visible on screen
-        const modalX = Math.max(
-          20,
-          Math.min(centerPixel[0] - 140, mapSize[0] - 300)
-        );
-        const modalY = Math.max(
-          80,
-          Math.min(centerPixel[1] - 40, mapSize[1] - 100)
-        );
-
-        setTranslateLayerPosition({ x: modalX, y: modalY });
-        setShowTranslateLayerModal(true);
-      }
-    }
+    setShowTranslateLayerModal(true);
   };
 
   const stopAll = (options?: { preserveFocus?: boolean }) => {
@@ -2551,12 +2501,7 @@ export default function LeftDock() {
         typeCode: resolvedLayerForAdd.typeCode,
       });
     }
-  }, [
-    resolvedLayerForAdd,
-    targetLayerForAdd,
-    uiMode,
-    showAddToLayerModeModal,
-  ]);
+  }, [resolvedLayerForAdd, targetLayerForAdd, uiMode, showAddToLayerModeModal]);
 
   const handleAddToLayerButtonClick = () => {
     if (!map || !layers.length) return;
@@ -2682,7 +2627,10 @@ export default function LeftDock() {
     setUIMode("addToLayer");
 
     if (isMulti) {
-      flash("Mode MultiPolygon aktif. Gambar beberapa polygon lalu klik Selesai.", "ok");
+      flash(
+        "Mode MultiPolygon aktif. Gambar beberapa polygon lalu klik Selesai.",
+        "ok"
+      );
     }
 
     setShowDrawingToolbar(true);
@@ -3195,7 +3143,9 @@ export default function LeftDock() {
             const geomType = geometry.getType();
             if (geomType === "Polygon") {
               combinedCoords.push(
-                (geometry as Polygon).getCoordinates() as unknown as PolygonRings
+                (
+                  geometry as Polygon
+                ).getCoordinates() as unknown as PolygonRings
               );
             } else if (geomType === "MultiPolygon") {
               (geometry as MultiPolygon)
@@ -3274,7 +3224,10 @@ export default function LeftDock() {
           combinedFeature.set("id", String(createdFeature.id));
           combinedFeature.set("name", normalizedFormEntry.regionName || "");
           combinedFeature.set("layerType", layerTypeValue);
-          combinedFeature.set("regionName", normalizedFormEntry.regionName || "");
+          combinedFeature.set(
+            "regionName",
+            normalizedFormEntry.regionName || ""
+          );
           combinedFeature.set("_rawAttributes", createdFeature.attribute || []);
           combinedFeature.set("_sessionParts", features.length);
 
@@ -3301,7 +3254,9 @@ export default function LeftDock() {
             }
 
             const layerTypeValue =
-              targetLayerForAdd.typeCode?.trim() || formData[i]?.layerType || "";
+              targetLayerForAdd.typeCode?.trim() ||
+              formData[i]?.layerType ||
+              "";
 
             formData[i] = {
               layerType: layerTypeValue,
@@ -3372,9 +3327,7 @@ export default function LeftDock() {
 
           if (savedEntries.length > 0) {
             const label =
-              addToLayerMode === "multipolygon"
-                ? "MultiPolygon"
-                : "feature";
+              addToLayerMode === "multipolygon" ? "MultiPolygon" : "feature";
             flash(
               `Berhasil menambah ${savedEntries.length} ${label} ke layer "${targetLayerForAdd.name}"`,
               "ok"
@@ -3391,107 +3344,47 @@ export default function LeftDock() {
         if (pendingMultiMode) {
           const combinedCoords: PolygonRings[] = [];
 
-        features.forEach((feature, index) => {
-          const geometry = feature.getGeometry();
-          if (!geometry) {
-            console.warn(
-              `Feature ${index} has no geometry, skipping for multi polygon build`
-            );
-            return;
-          }
-
-          const geomType = geometry.getType();
-          if (geomType === "Polygon") {
-            combinedCoords.push(
-              (geometry as Polygon).getCoordinates() as unknown as PolygonRings
-            );
-          } else if (geomType === "MultiPolygon") {
-            (geometry as MultiPolygon)
-              .getCoordinates()
-              .forEach((coords) =>
-                combinedCoords.push(coords as unknown as PolygonRings)
+          features.forEach((feature, index) => {
+            const geometry = feature.getGeometry();
+            if (!geometry) {
+              console.warn(
+                `Feature ${index} has no geometry, skipping for multi polygon build`
               );
-          } else {
-            console.warn(
-              `[Drawing] Unsupported geometry type "${geomType}" encountered while building MultiPolygon`
-            );
-          }
-        });
+              return;
+            }
 
-        if (!combinedCoords.length) {
-          throw new Error("Tidak ada polygon valid untuk MultiPolygon");
-        }
+            const geomType = geometry.getType();
+            if (geomType === "Polygon") {
+              combinedCoords.push(
+                (
+                  geometry as Polygon
+                ).getCoordinates() as unknown as PolygonRings
+              );
+            } else if (geomType === "MultiPolygon") {
+              (geometry as MultiPolygon)
+                .getCoordinates()
+                .forEach((coords) =>
+                  combinedCoords.push(coords as unknown as PolygonRings)
+                );
+            } else {
+              console.warn(
+                `[Drawing] Unsupported geometry type "${geomType}" encountered while building MultiPolygon`
+              );
+            }
+          });
 
-        const multiGeometry = new MultiPolygon(combinedCoords);
-        const wktGeometry = geometryToWKT(multiGeometry);
-
-        if (!wktGeometry) {
-          throw new Error("Gagal mengubah MultiPolygon ke format WKT");
-        }
-
-        const formEntry = formData[0] ?? { layerType: "", regionName: "" };
-
-        const payload = {
-          identifier: "spatialFeature.uuid",
-          label: "uuid",
-          value: generateUUID(),
-          status: 1,
-          attribute: [
-            {
-              attributeKey: "spatialFeature.type",
-              attributeLabel: "Type",
-              attributeValueType: 1,
-              attributeValue: formEntry.layerType || "",
-              status: 1,
-            },
-            {
-              attributeKey: "spatialFeature.geometry",
-              attributeLabel: "Geometry",
-              attributeValueType: 13,
-              attributeValue: wktGeometry,
-              status: 1,
-            },
-            {
-              attributeKey: "spatialFeature.refWilayah",
-              attributeLabel: "Ref Wilayah",
-              attributeValueType: 1,
-              attributeValue: formEntry.regionName || "",
-              status: 1,
-            },
-          ],
-        };
-
-        console.log("Creating MultiPolygon spatial feature:", payload);
-
-        const createdFeature = await createSpatialFeature(payload);
-
-        const combinedFeature = new OLFeature<Geometry>(multiGeometry.clone());
-        combinedFeature.set("id", String(createdFeature.id));
-        combinedFeature.set("name", formEntry.regionName || "");
-        combinedFeature.set("layerType", formEntry.layerType || "");
-        combinedFeature.set("regionName", formEntry.regionName || "");
-        combinedFeature.set("_sessionParts", features.length);
-        combinedFeature.set("_rawAttributes", createdFeature.attribute || []);
-
-        savedEntries.push({
-          feature: combinedFeature,
-          form: formEntry,
-          api: createdFeature,
-        });
-      } else {
-        for (let i = 0; i < features.length; i++) {
-          const feature = features[i];
-          const geometry = feature.getGeometry();
-
-          if (!geometry) {
-            console.warn(`Feature ${i} has no geometry`);
-            continue;
+          if (!combinedCoords.length) {
+            throw new Error("Tidak ada polygon valid untuk MultiPolygon");
           }
 
-          const wktGeometry = geometryToWKT(geometry);
+          const multiGeometry = new MultiPolygon(combinedCoords);
+          const wktGeometry = geometryToWKT(multiGeometry);
+
           if (!wktGeometry) {
-            throw new Error(`Failed to convert polygon ${i} to WKT format`);
+            throw new Error("Gagal mengubah MultiPolygon ke format WKT");
           }
+
+          const formEntry = formData[0] ?? { layerType: "", regionName: "" };
 
           const payload = {
             identifier: "spatialFeature.uuid",
@@ -3503,7 +3396,7 @@ export default function LeftDock() {
                 attributeKey: "spatialFeature.type",
                 attributeLabel: "Type",
                 attributeValueType: 1,
-                attributeValue: formData[i]?.layerType || "",
+                attributeValue: formEntry.layerType || "",
                 status: 1,
               },
               {
@@ -3517,30 +3410,94 @@ export default function LeftDock() {
                 attributeKey: "spatialFeature.refWilayah",
                 attributeLabel: "Ref Wilayah",
                 attributeValueType: 1,
-                attributeValue: formData[i]?.regionName || "",
+                attributeValue: formEntry.regionName || "",
                 status: 1,
               },
             ],
           };
 
-          console.log(`Creating spatial feature ${i + 1}:`, payload);
+          console.log("Creating MultiPolygon spatial feature:", payload);
 
           const createdFeature = await createSpatialFeature(payload);
 
-          const databaseId = createdFeature.id;
-          feature.set("id", String(databaseId));
-          feature.set("name", formData[i]?.regionName || "");
-          feature.set("layerType", formData[i]?.layerType || "");
-          feature.set("regionName", formData[i]?.regionName || "");
-          feature.set("_rawAttributes", createdFeature.attribute || []);
+          const combinedFeature = new OLFeature<Geometry>(
+            multiGeometry.clone()
+          );
+          combinedFeature.set("id", String(createdFeature.id));
+          combinedFeature.set("name", formEntry.regionName || "");
+          combinedFeature.set("layerType", formEntry.layerType || "");
+          combinedFeature.set("regionName", formEntry.regionName || "");
+          combinedFeature.set("_sessionParts", features.length);
+          combinedFeature.set("_rawAttributes", createdFeature.attribute || []);
 
           savedEntries.push({
-            feature,
-            form: formData[i],
+            feature: combinedFeature,
+            form: formEntry,
             api: createdFeature,
           });
+        } else {
+          for (let i = 0; i < features.length; i++) {
+            const feature = features[i];
+            const geometry = feature.getGeometry();
+
+            if (!geometry) {
+              console.warn(`Feature ${i} has no geometry`);
+              continue;
+            }
+
+            const wktGeometry = geometryToWKT(geometry);
+            if (!wktGeometry) {
+              throw new Error(`Failed to convert polygon ${i} to WKT format`);
+            }
+
+            const payload = {
+              identifier: "spatialFeature.uuid",
+              label: "uuid",
+              value: generateUUID(),
+              status: 1,
+              attribute: [
+                {
+                  attributeKey: "spatialFeature.type",
+                  attributeLabel: "Type",
+                  attributeValueType: 1,
+                  attributeValue: formData[i]?.layerType || "",
+                  status: 1,
+                },
+                {
+                  attributeKey: "spatialFeature.geometry",
+                  attributeLabel: "Geometry",
+                  attributeValueType: 13,
+                  attributeValue: wktGeometry,
+                  status: 1,
+                },
+                {
+                  attributeKey: "spatialFeature.refWilayah",
+                  attributeLabel: "Ref Wilayah",
+                  attributeValueType: 1,
+                  attributeValue: formData[i]?.regionName || "",
+                  status: 1,
+                },
+              ],
+            };
+
+            console.log(`Creating spatial feature ${i + 1}:`, payload);
+
+            const createdFeature = await createSpatialFeature(payload);
+
+            const databaseId = createdFeature.id;
+            feature.set("id", String(databaseId));
+            feature.set("name", formData[i]?.regionName || "");
+            feature.set("layerType", formData[i]?.layerType || "");
+            feature.set("regionName", formData[i]?.regionName || "");
+            feature.set("_rawAttributes", createdFeature.attribute || []);
+
+            savedEntries.push({
+              feature,
+              form: formData[i],
+              api: createdFeature,
+            });
+          }
         }
-      }
       }
 
       if (!savedEntries.length) {
@@ -3908,7 +3865,7 @@ export default function LeftDock() {
   };
 
   // Translate feature handlers
-  const handleTranslateFeatureFinish = () => {
+  const performTranslateFeatureCancel = () => {
     if (originalTranslateGeometryRef.current) {
       restoreFeatureGeometryFromSnapshot(
         targetFeatureRef.current,
@@ -3924,20 +3881,29 @@ export default function LeftDock() {
     stopAll();
   };
 
-  const handleTranslateFeatureCancel = () => {
-    if (originalTranslateGeometryRef.current) {
-      restoreFeatureGeometryFromSnapshot(
-        targetFeatureRef.current,
-        originalTranslateGeometryRef.current
-      );
+  const requestTranslateFeatureCancel = () => {
+    if (isTranslateFeatureDirty) {
+      setShowTranslateFeatureCancelConfirm(true);
+    } else {
+      performTranslateFeatureCancel();
     }
-    setShowTranslateFeatureModal(false);
-    setIsTranslateFeatureDirty(false);
-    setIsSavingTranslateFeature(false);
-    originalTranslateGeometryRef.current = null;
-    setCurrentFeatureId(null);
-    setCurrentFeatureName("");
-    stopAll();
+  };
+
+  const handleTranslateFeatureFinish = () => {
+    requestTranslateFeatureCancel();
+  };
+
+  const handleTranslateFeatureCancel = () => {
+    requestTranslateFeatureCancel();
+  };
+
+  const confirmTranslateFeatureCancel = () => {
+    setShowTranslateFeatureCancelConfirm(false);
+    performTranslateFeatureCancel();
+  };
+
+  const dismissTranslateFeatureCancelConfirm = () => {
+    setShowTranslateFeatureCancelConfirm(false);
   };
 
   const handleTranslateFeatureSave = async () => {
@@ -4030,7 +3996,7 @@ export default function LeftDock() {
   };
 
   // Translate layer handlers
-  const handleTranslateLayerFinish = () => {
+  const performTranslateLayerCancel = () => {
     if (originalLayerGeometriesRef.current) {
       restoreLayerGeometriesFromSnapshot(
         targetLayerFeaturesRef.current,
@@ -4046,21 +4012,150 @@ export default function LeftDock() {
     stopAll();
   };
 
-  const handleTranslateLayerCancel = () => {
-    if (originalLayerGeometriesRef.current) {
-      restoreLayerGeometriesFromSnapshot(
-        targetLayerFeaturesRef.current,
-        originalLayerGeometriesRef.current
-      );
+  const requestTranslateLayerCancel = () => {
+    if (isTranslateLayerDirty) {
+      setShowTranslateLayerCancelConfirm(true);
+    } else {
+      performTranslateLayerCancel();
     }
-    setShowTranslateLayerModal(false);
-    setIsTranslateLayerDirty(false);
-    setIsSavingTranslateLayer(false);
-    originalLayerGeometriesRef.current = null;
-    setCurrentLayerName("");
-    setCurrentLayerFeatureCount(0);
-    stopAll();
   };
+
+  const handleTranslateLayerFinish = () => {
+    requestTranslateLayerCancel();
+  };
+
+  const handleTranslateLayerCancel = () => {
+    requestTranslateLayerCancel();
+  };
+
+  const confirmTranslateLayerCancel = () => {
+    setShowTranslateLayerCancelConfirm(false);
+    performTranslateLayerCancel();
+  };
+
+  const dismissTranslateLayerCancelConfirm = () => {
+    setShowTranslateLayerCancelConfirm(false);
+  };
+
+  useEffect(() => {
+    if (!showTranslateFeatureCancelConfirm) return;
+
+    const focusTimer = window.setTimeout(() => {
+      translateFeatureCancelConfirmButtonRef.current?.focus();
+    }, 20);
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (!isSavingTranslateFeature) {
+          dismissTranslateFeatureCancelConfirm();
+        }
+        return;
+      }
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        if (!isSavingTranslateFeature) {
+          confirmTranslateFeatureCancel();
+        }
+        return;
+      }
+
+      if (event.key === "Tab") {
+        const dialog = translateFeatureCancelDialogRef.current;
+        if (!dialog) return;
+        const focusable = dialog.querySelectorAll<HTMLElement>(
+          "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])"
+        );
+        if (!focusable.length) {
+          event.preventDefault();
+          return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey) {
+          if (document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+          }
+        } else if (document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [
+    showTranslateFeatureCancelConfirm,
+    dismissTranslateFeatureCancelConfirm,
+    confirmTranslateFeatureCancel,
+    isSavingTranslateFeature,
+  ]);
+
+  useEffect(() => {
+    if (!showTranslateLayerCancelConfirm) return;
+
+    const focusTimer = window.setTimeout(() => {
+      translateLayerCancelConfirmButtonRef.current?.focus();
+    }, 20);
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (!isSavingTranslateLayer) {
+          dismissTranslateLayerCancelConfirm();
+        }
+        return;
+      }
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        if (!isSavingTranslateLayer) {
+          confirmTranslateLayerCancel();
+        }
+        return;
+      }
+
+      if (event.key === "Tab") {
+        const dialog = translateLayerCancelDialogRef.current;
+        if (!dialog) return;
+        const focusable = dialog.querySelectorAll<HTMLElement>(
+          "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])"
+        );
+        if (!focusable.length) {
+          event.preventDefault();
+          return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey) {
+          if (document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+          }
+        } else if (document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [
+    showTranslateLayerCancelConfirm,
+    dismissTranslateLayerCancelConfirm,
+    confirmTranslateLayerCancel,
+    isSavingTranslateLayer,
+  ]);
 
   const handleTranslateLayerSave = async () => {
     if (
@@ -4697,6 +4792,280 @@ export default function LeftDock() {
           document.body
         )
       : null;
+
+  const translateFeatureCancelPortal =
+    showTranslateFeatureCancelConfirm && typeof document !== "undefined"
+      ? createPortal(
+          <>
+            <style>{`
+              @keyframes translateFeatureCancelOverlayFade {
+                from { opacity: 0; }
+                to { opacity: 1; }
+              }
+              @keyframes translateFeatureCancelDialogScale {
+                from { opacity: 0; transform: translateY(16px) scale(0.96); }
+                to { opacity: 1; transform: translateY(0) scale(1); }
+              }
+            `}</style>
+            <div
+              onClick={() => {
+                if (isSavingTranslateFeature) return;
+                dismissTranslateFeatureCancelConfirm();
+              }}
+              style={{
+                position: "fixed",
+                inset: 0,
+                background: "rgba(15, 23, 42, 0.55)",
+                backdropFilter: "blur(2px)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                zIndex: 5200,
+                animation: "translateFeatureCancelOverlayFade 0.18s ease-out",
+              }}
+            >
+              <div
+                ref={translateFeatureCancelDialogRef}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="translate-feature-cancel-title"
+                aria-describedby="translate-feature-cancel-description"
+                onClick={(event) => event.stopPropagation()}
+                style={{
+                  width: "min(90%, 360px)",
+                  background: "#ffffff",
+                  borderRadius: 16,
+                  boxShadow: "0 24px 48px rgba(15,23,42,0.32)",
+                  padding: "24px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "16px",
+                  animation: "translateFeatureCancelDialogScale 0.22s ease-out",
+                }}
+              >
+                <div
+                  id="translate-feature-cancel-title"
+                  style={{
+                    fontSize: "18px",
+                    fontWeight: 700,
+                    color: "#111827",
+                  }}
+                >
+                  Batalkan Perubahan?
+                </div>
+                <p
+                  id="translate-feature-cancel-description"
+                  style={{
+                    margin: 0,
+                    fontSize: "14px",
+                    lineHeight: 1.6,
+                    color: "#4b5563",
+                  }}
+                >
+                  Perubahan posisi fitur ini belum disimpan. Yakin ingin
+                  membatalkan dan mengembalikan ke posisi semula?
+                </p>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "flex-end",
+                    gap: "12px",
+                    marginTop: "8px",
+                  }}
+                >
+                  <button
+                    ref={translateFeatureCancelCancelButtonRef}
+                    type="button"
+                    onClick={dismissTranslateFeatureCancelConfirm}
+                    disabled={isSavingTranslateFeature}
+                    style={{
+                      border: "1px solid #d1d5db",
+                      background: "#fff",
+                      color: "#374151",
+                      borderRadius: 8,
+                      padding: "10px 18px",
+                      fontSize: "14px",
+                      fontWeight: 500,
+                      cursor: isSavingTranslateFeature
+                        ? "not-allowed"
+                        : "pointer",
+                      transition: "all 0.2s ease",
+                      opacity: isSavingTranslateFeature ? 0.6 : 1,
+                    }}
+                  >
+                    Tidak
+                  </button>
+                  <button
+                    ref={translateFeatureCancelConfirmButtonRef}
+                    type="button"
+                    onClick={confirmTranslateFeatureCancel}
+                    disabled={isSavingTranslateFeature}
+                    style={{
+                      border: "none",
+                      background: "#ef4444",
+                      color: "#ffffff",
+                      borderRadius: 8,
+                      padding: "10px 20px",
+                      fontSize: "14px",
+                      fontWeight: 600,
+                      cursor: isSavingTranslateFeature
+                        ? "not-allowed"
+                        : "pointer",
+                      transition: "all 0.2s ease",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                      boxShadow: "0 10px 20px rgba(239,68,68,0.25)",
+                      opacity: isSavingTranslateFeature ? 0.85 : 1,
+                    }}
+                  >
+                    <span className="icon">undo</span>
+                    Ya, Batalkan
+                  </button>
+                </div>
+              </div>
+            </div>
+          </>,
+          document.body
+        )
+      : null;
+
+  const translateLayerCancelPortal =
+    showTranslateLayerCancelConfirm && typeof document !== "undefined"
+      ? createPortal(
+          <>
+            <style>{`
+              @keyframes translateLayerCancelOverlayFade {
+                from { opacity: 0; }
+                to { opacity: 1; }
+              }
+              @keyframes translateLayerCancelDialogScale {
+                from { opacity: 0; transform: translateY(16px) scale(0.96); }
+                to { opacity: 1; transform: translateY(0) scale(1); }
+              }
+            `}</style>
+            <div
+              onClick={() => {
+                if (isSavingTranslateLayer) return;
+                dismissTranslateLayerCancelConfirm();
+              }}
+              style={{
+                position: "fixed",
+                inset: 0,
+                background: "rgba(15, 23, 42, 0.55)",
+                backdropFilter: "blur(2px)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                zIndex: 5200,
+                animation: "translateLayerCancelOverlayFade 0.18s ease-out",
+              }}
+            >
+              <div
+                ref={translateLayerCancelDialogRef}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="translate-layer-cancel-title"
+                aria-describedby="translate-layer-cancel-description"
+                onClick={(event) => event.stopPropagation()}
+                style={{
+                  width: "min(90%, 380px)",
+                  background: "#ffffff",
+                  borderRadius: 16,
+                  boxShadow: "0 24px 48px rgba(15,23,42,0.32)",
+                  padding: "24px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "16px",
+                  animation: "translateLayerCancelDialogScale 0.22s ease-out",
+                }}
+              >
+                <div
+                  id="translate-layer-cancel-title"
+                  style={{
+                    fontSize: "18px",
+                    fontWeight: 700,
+                    color: "#111827",
+                  }}
+                >
+                  Batalkan Perubahan Layer?
+                </div>
+                <p
+                  id="translate-layer-cancel-description"
+                  style={{
+                    margin: 0,
+                    fontSize: "14px",
+                    lineHeight: 1.6,
+                    color: "#4b5563",
+                  }}
+                >
+                  Perubahan posisi seluruh fitur layer ini belum disimpan. Yakin
+                  ingin membatalkan dan mengembalikannya?
+                </p>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "flex-end",
+                    gap: "12px",
+                    marginTop: "8px",
+                  }}
+                >
+                  <button
+                    ref={translateLayerCancelCancelButtonRef}
+                    type="button"
+                    onClick={dismissTranslateLayerCancelConfirm}
+                    disabled={isSavingTranslateLayer}
+                    style={{
+                      border: "1px solid #d1d5db",
+                      background: "#fff",
+                      color: "#374151",
+                      borderRadius: 8,
+                      padding: "10px 18px",
+                      fontSize: "14px",
+                      fontWeight: 500,
+                      cursor: isSavingTranslateLayer
+                        ? "not-allowed"
+                        : "pointer",
+                      transition: "all 0.2s ease",
+                      opacity: isSavingTranslateLayer ? 0.6 : 1,
+                    }}
+                  >
+                    Tidak
+                  </button>
+                  <button
+                    ref={translateLayerCancelConfirmButtonRef}
+                    type="button"
+                    onClick={confirmTranslateLayerCancel}
+                    disabled={isSavingTranslateLayer}
+                    style={{
+                      border: "none",
+                      background: "#ef4444",
+                      color: "#ffffff",
+                      borderRadius: 8,
+                      padding: "10px 20px",
+                      fontSize: "14px",
+                      fontWeight: 600,
+                      cursor: isSavingTranslateLayer
+                        ? "not-allowed"
+                        : "pointer",
+                      transition: "all 0.2s ease",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                      boxShadow: "0 10px 20px rgba(239,68,68,0.25)",
+                      opacity: isSavingTranslateLayer ? 0.85 : 1,
+                    }}
+                  >
+                    <span className="icon">undo</span>
+                    Ya, Batalkan
+                  </button>
+                </div>
+              </div>
+            </div>
+          </>,
+          document.body
+        )
+      : null;
   return (
     <div className="leftstack">
       {uiMode !== "idle" && (
@@ -4829,7 +5198,10 @@ export default function LeftDock() {
                 }
                 onClick={startMove}
                 disabled={translateFeatureDisabled}
-                style={getActionButtonStyle("#eab308", translateFeatureDisabled)}
+                style={getActionButtonStyle(
+                  "#eab308",
+                  translateFeatureDisabled
+                )}
               >
                 <span className="icon">open_with</span>
               </button>
@@ -5295,7 +5667,8 @@ export default function LeftDock() {
                   lineHeight: 1.6,
                 }}
               >
-                Tentukan apakah kamu ingin menambah satu Polygon atau membuat MultiPolygon pada layer yang dipilih.
+                Tentukan apakah kamu ingin menambah satu Polygon atau membuat
+                MultiPolygon pada layer yang dipilih.
               </p>
               <div
                 style={{
@@ -5323,7 +5696,9 @@ export default function LeftDock() {
                     transition: "all 0.2s ease",
                   }}
                 >
-                  <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span
+                    style={{ display: "flex", alignItems: "center", gap: 8 }}
+                  >
                     <span className="icon">pentagon</span>
                     Draw Polygon
                   </span>
@@ -5355,7 +5730,9 @@ export default function LeftDock() {
                     transition: "all 0.2s ease",
                   }}
                 >
-                  <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span
+                    style={{ display: "flex", alignItems: "center", gap: 8 }}
+                  >
                     <span className="icon">stack</span>
                     Draw Multipolygon
                   </span>
@@ -5474,6 +5851,8 @@ export default function LeftDock() {
         />
       )}
 
+      {translateFeatureCancelPortal}
+      {translateLayerCancelPortal}
       {deleteConfirmationPortal}
 
       {/* Translate Layer Confirmation Modal */}
