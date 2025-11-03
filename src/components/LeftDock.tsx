@@ -772,13 +772,27 @@ export default function LeftDock() {
           status: 1,
         });
 
-        // Add spatialFeature.refWilayah from "name" property if exists
-        if (properties.name) {
+        // Add spatialFeature.refWilayah from various possible name attributes
+        const refWilayahValue =
+          properties.name ||
+          properties.NM ||
+          properties.Nama ||
+          properties.nama ||
+          properties.PROVINSI ||
+          properties.D_NM_KEC ||
+          properties.D_NM_DT2 ||
+          properties.DAERAH ||
+          properties.daerah ||
+          properties.wilayah ||
+          properties.WILAYAH ||
+          properties.KECAMATAN ||
+          properties.REF_WILAYAH;
+        if (refWilayahValue) {
           attributes.push({
             attributeKey: "spatialFeature.refWilayah",
             attributeLabel: "Ref Wilayah",
             attributeValueType: 1,
-            attributeValue: String(properties.name),
+            attributeValue: String(refWilayahValue),
             status: 1,
           });
         }
@@ -2937,9 +2951,7 @@ export default function LeftDock() {
 
           // Use target layer's typeCode for the spatialFeature.type attribute
           const layerTypeValue =
-            targetLayerForAdd.typeCode?.trim() ||
-            formData[i]?.layerType ||
-            "";
+            targetLayerForAdd.typeCode?.trim() || formData[i]?.layerType || "";
 
           // Ensure the form entry carries the layer type so downstream logic can use it
           formData[i] = {
