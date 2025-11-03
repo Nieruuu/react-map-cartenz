@@ -1,5 +1,5 @@
 // src/components/LeftDock.tsx
-import { useRef, useState, useEffect, useCallback } from "react";
+import { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import VectorLayer from "ol/layer/Vector";
 import VectorSource from "ol/source/Vector";
@@ -23,7 +23,11 @@ import { unByKey } from "ol/Observable";
 import { singleClick } from "ol/events/condition";
 
 import { useMapStore } from "../hooks/useMapStore";
-import { useLayersStore, styleFromCfg } from "../hooks/useLayersStore";
+import {
+  useLayersStore,
+  styleFromCfg,
+  type LayerEntry,
+} from "../hooks/useLayersStore";
 import LayerLoadModal from "./LayerLoadModal";
 import ExportModal from "./ExportModal";
 import {
@@ -102,6 +106,15 @@ const COORD_TOLERANCE = 1e-9;
 type NormalizeOptions = {
   allowDegenerate?: boolean;
 };
+
+const getActionButtonStyle = (baseColor: string, disabled: boolean) => ({
+  background: disabled ? "#94a3b8" : baseColor,
+  borderColor: disabled ? "#94a3b8" : baseColor,
+  color: "#ffffff",
+  opacity: disabled ? 0.5 : 1,
+  cursor: disabled ? "not-allowed" : "pointer",
+  transition: "all 0.2s ease",
+});
 
 function isTypedNumericArray(value: unknown): value is ArrayLike<number> {
   return (
@@ -549,6 +562,7 @@ export default function LeftDock() {
 
   const deleteVertexModeRef = useRef(false);
   const [deleteVertexOn, setDeleteVertexOn] = useState(false);
+  const stopAllRef = useRef<(options?: { preserveFocus?: boolean }) => void>(() => {});
 
   const setBusy = (busy: boolean) =>
     window.dispatchEvent(
@@ -668,8 +682,50 @@ export default function LeftDock() {
       window.clearTimeout(focusTimer);
     };
   }, [showAddToLayerModeModal, closeAddToLayerModeDialog]);
+
+  const resolvedLayerForAdd = useMemo<LayerEntry | null>(() => {
+    if (!layers.length) return null;
+
+    if (selectedLayerId) {
+      const bySelection = layers.find((entry) => entry.id === selectedLayerId);
+      if (bySelection) {
+        return bySelection;
+      }
+    }
+
+    if (selectedId) {
+      const selectedIdStr = String(selectedId);
+      for (const entry of layers) {
+        const source = entry.layer.getSource?.();
+        if (!source) continue;
+        const hasFeature = source
+          .getFeatures()
+          .some(
+            (feature: OLFeature<Geometry>) =>
+              String(feature.get("id") ?? "") === selectedIdStr
+          );
+        if (hasFeature) {
+          return entry;
+        }
+      }
+    }
+
+    return null;
+  }, [layers, selectedLayerId, selectedId]);
+
+  const canAddToLayer = Boolean(resolvedLayerForAdd);
+  const isAddButtonDisabled = isAddToLayerActive || !canAddToLayer;
+  const hasSelectedFeature = Boolean(selectedId);
+  const hasSelectedLayer = Boolean(selectedLayerId);
+
+  const editFeatureDisabled = !hasSelectedFeature || uiMode === "modify";
+  const translateFeatureDisabled =
+    !hasSelectedFeature || uiMode === "translate" || uiMode === "translateLayer";
+  const translateLayerDisabled =
+    !hasSelectedLayer || uiMode === "translateLayer" || uiMode === "translate";
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleteInProgress, setIsDeleteInProgress] = useState(false);
+  const deleteFeatureDisabled = !hasSelectedFeature || isDeleteInProgress;
 
   // Translate layer confirmation state
   const [showTranslateLayerConfirm, setShowTranslateLayerConfirm] =
@@ -2405,12 +2461,41 @@ export default function LeftDock() {
       flash("Anda keluar dari mode geser layer");
   };
 
+  stopAllRef.current = stopAll;
+
+  useEffect(() => {
+    if (!resolvedLayerForAdd) {
+      if (targetLayerForAdd) {
+        setTargetLayerForAdd(null);
+      }
+      if (showAddToLayerModeModal) {
+        setShowAddToLayerModeModal(false);
+      }
+      if (uiMode === "addToLayer") {
+        stopAllRef.current({ preserveFocus: true });
+      }
+    } else if (
+      uiMode === "addToLayer" &&
+      (!targetLayerForAdd || targetLayerForAdd.id !== resolvedLayerForAdd.id)
+    ) {
+      setTargetLayerForAdd({
+        id: resolvedLayerForAdd.id,
+        name: resolvedLayerForAdd.name,
+        layer: resolvedLayerForAdd.layer,
+        typeCode: resolvedLayerForAdd.typeCode,
+      });
+    }
+  }, [
+    resolvedLayerForAdd,
+    targetLayerForAdd,
+    uiMode,
+    showAddToLayerModeModal,
+  ]);
+
   const handleAddToLayerButtonClick = () => {
     if (!map || !layers.length) return;
-    const targetLayer = selectedLayerId
-      ? layers.find((le) => le.id === selectedLayerId)
-      : null;
 
+    const targetLayer = resolvedLayerForAdd;
     if (!targetLayer) {
       flash("Pilih layer terlebih dahulu sebelum menambah feature", "err");
       return;
@@ -2420,15 +2505,18 @@ export default function LeftDock() {
     setShowAddToLayerModeModal(true);
   };
 
-  const handleStartAddPolygon = () => startAddToLayer("polygon");
-  const handleStartAddMultipolygon = () => startAddToLayer("multipolygon");
+  const handleStartAddPolygon = () =>
+    startAddToLayer("polygon", resolvedLayerForAdd);
+  const handleStartAddMultipolygon = () =>
+    startAddToLayer("multipolygon", resolvedLayerForAdd);
 
-  const startAddToLayer = (mode: "polygon" | "multipolygon") => {
+  const startAddToLayer = (
+    mode: "polygon" | "multipolygon",
+    layerOverride?: LayerEntry | null
+  ) => {
     if (!map || !layers.length) return;
 
-    const targetLayer = selectedLayerId
-      ? layers.find((le) => le.id === selectedLayerId)
-      : null;
+    const targetLayer = layerOverride ?? resolvedLayerForAdd;
 
     if (!targetLayer) {
       flash("Pilih layer terlebih dahulu sebelum menambah feature", "err");
@@ -2443,7 +2531,12 @@ export default function LeftDock() {
     stopAll();
     setBusy(true);
     setFocus?.(null);
-    setTargetLayerForAdd(targetLayer);
+    setTargetLayerForAdd({
+      id: targetLayer.id,
+      name: targetLayer.name,
+      layer: targetLayer.layer,
+      typeCode: targetLayer.typeCode,
+    });
     setAddToLayerMode(mode);
     setPendingMultiMode(isMulti);
     setIsMultiMode(isMulti);
@@ -4620,40 +4713,40 @@ export default function LeftDock() {
               </button>
               <button
                 className="circle"
-                title="Edit vertices"
+                title={
+                  editFeatureDisabled
+                    ? "Pilih feature terlebih dahulu untuk edit vertex"
+                    : "Edit vertices"
+                }
                 onClick={startEdit}
-                disabled={uiMode === "modify"}
-                style={{
-                  background: "#10b981",
-                  color: "#fff",
-                  borderColor: "#10b981",
-                }}
+                disabled={editFeatureDisabled}
+                style={getActionButtonStyle("#10b981", editFeatureDisabled)}
               >
                 <span className="icon">edit</span>
               </button>
               <button
                 className="circle"
-                title="Geser feature"
+                title={
+                  translateFeatureDisabled
+                    ? "Pilih feature terlebih dahulu untuk menggeser"
+                    : "Geser feature"
+                }
                 onClick={startMove}
-                disabled={uiMode === "translate" || uiMode === "translateLayer"}
-                style={{
-                  background: "#eab308",
-                  color: "#fff",
-                  borderColor: "#eab308",
-                }}
+                disabled={translateFeatureDisabled}
+                style={getActionButtonStyle("#eab308", translateFeatureDisabled)}
               >
                 <span className="icon">open_with</span>
               </button>
               <button
                 className="circle"
-                title="Geser seluruh layer"
+                title={
+                  translateLayerDisabled
+                    ? "Pilih layer terlebih dahulu untuk menggeser"
+                    : "Geser seluruh layer"
+                }
                 onClick={startMoveLayer}
-                disabled={uiMode === "translateLayer" || uiMode === "translate"}
-                style={{
-                  background: "#6366f1",
-                  color: "#fff",
-                  borderColor: "#6366f1",
-                }}
+                disabled={translateLayerDisabled}
+                style={getActionButtonStyle("#6366f1", translateLayerDisabled)}
               >
                 <span className="icon">open_with</span>
               </button>
@@ -4669,9 +4762,16 @@ export default function LeftDock() {
               <button
                 ref={deleteButtonRef}
                 className="circle danger"
-                title="Hapus feature terpilih"
+                title={
+                  deleteFeatureDisabled
+                    ? "Pilih feature terlebih dahulu untuk menghapus"
+                    : "Hapus feature terpilih"
+                }
                 onClick={handleDeleteClick}
                 aria-haspopup="dialog"
+                disabled={deleteFeatureDisabled}
+                aria-disabled={deleteFeatureDisabled}
+                style={getActionButtonStyle("#ef4444", deleteFeatureDisabled)}
               >
                 <span className="icon">delete_forever</span>
               </button>
@@ -4685,25 +4785,32 @@ export default function LeftDock() {
                           ? "MultiPolygon"
                           : "Polygon"
                       } ke layer`
-                    : "Tambah feature ke layer yang ada"
+                    : canAddToLayer
+                    ? "Tambah feature ke layer yang ada"
+                    : "Pilih layer atau feature terlebih dahulu untuk menambah ke layer"
                 }
                 onClick={handleAddToLayerButtonClick}
-                disabled={isAddToLayerActive}
+                disabled={isAddButtonDisabled}
                 aria-pressed={isAddToLayerActive}
+                aria-disabled={isAddButtonDisabled}
                 style={{
                   background: isAddToLayerActive
                     ? addToLayerMode === "multipolygon"
                       ? "#4f46e5"
                       : "#22c55e"
-                    : "#22c55e",
+                    : canAddToLayer
+                    ? "#22c55e"
+                    : "#94a3b8",
                   color: "#fff",
                   borderColor: isAddToLayerActive
                     ? addToLayerMode === "multipolygon"
                       ? "#4f46e5"
                       : "#22c55e"
-                    : "#22c55e",
-                  cursor: isAddToLayerActive ? "not-allowed" : "pointer",
-                  opacity: isAddToLayerActive ? 0.8 : 1,
+                    : canAddToLayer
+                    ? "#22c55e"
+                    : "#94a3b8",
+                  cursor: isAddButtonDisabled ? "not-allowed" : "pointer",
+                  opacity: isAddButtonDisabled ? 0.6 : 1,
                   boxShadow: isAddToLayerActive
                     ? "0 0 0 2px rgba(255,255,255,0.15)"
                     : "none",

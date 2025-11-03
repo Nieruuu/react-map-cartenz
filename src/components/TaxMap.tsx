@@ -727,6 +727,7 @@ export default function TaxMap() {
     setHoveredId,
     setZoomAndScale,
     setFocus,
+    selectLayer,
   } = useMapStore();
   const setLayersMap = useLayersStore((s) => s.setMap);
   const addLayerToMgr = useLayersStore((s) => s.addLayer);
@@ -1198,6 +1199,7 @@ export default function TaxMap() {
       if (!found) {
         setSelectedId(undefined);
         setFocus(null);
+        selectLayer(null);
         return;
       }
 
@@ -1207,6 +1209,9 @@ export default function TaxMap() {
         featureName(found as any) ||
         "-";
       setSelectedId(id);
+      if (foundLayerId) {
+        selectLayer(foundLayerId);
+      }
 
       const geom = (found as any).getGeometry() as Geometry;
       map

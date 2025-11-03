@@ -172,6 +172,16 @@ export const useMapStore = create<S>((set, get) => ({
       if (!f) {
         next.selectedId = undefined;
         next.hoveredId = undefined;
+        next.selectedLayerId = null;
+      } else if (
+        typeof f === "object" &&
+        f !== null &&
+        "layerId" in (f as Record<string, unknown>)
+      ) {
+        const candidate = (f as Record<string, unknown>).layerId;
+        if (candidate != null) {
+          next.selectedLayerId = String(candidate);
+        }
       }
 
       return next;
