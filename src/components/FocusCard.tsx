@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { fromLonLat } from "ol/proj";
 import { useMapStore } from "../hooks/useMapStore";
 import { useMetadataEditor } from "../hooks/useMetadataEditor";
+import type { EditableAttribute } from "../hooks/useMetadataEditor";
 import { useAppLoading } from "../hooks/useLoadingState";
 import type {
   SpatialFeature,
@@ -31,6 +32,12 @@ export default function FocusCard() {
   } | null>(null);
 
   const [showSaveConfirmation, setShowSaveConfirmation] = useState(false);
+  const [attributePendingDeletion, setAttributePendingDeletion] =
+    useState<EditableAttribute | null>(null);
+  const [
+    showDeleteAttributeConfirmation,
+    setShowDeleteAttributeConfirmation,
+  ] = useState(false);
   const metadataIsEditing = metadataEditor.state.isEditing;
   useEffect(() => {
     if (!toast) return;
@@ -144,6 +151,65 @@ export default function FocusCard() {
       }, 50);
     },
     [focus, setFocus]
+  );
+
+  const applyServerFeatureUpdate = useCallback(
+    (
+      updatedFeature: SpatialFeature,
+      detail?: { updates?: Record<string, unknown>; deletes?: string[] }
+    ) => {
+      const resolvedLayerId = String(
+        (focus as { layerId?: string })?.layerId ?? ""
+      );
+
+      const normalizedAttributes: SpatialFeatureAttribute[] = Array.isArray(
+        updatedFeature.attribute
+      )
+        ? (updatedFeature.attribute as SpatialFeatureAttribute[]).map(
+            (attr, index) => ({
+              ...attr,
+              attributeIndex:
+                attr.attributeIndex !== undefined
+                  ? attr.attributeIndex
+                  : index,
+            })
+          )
+        : [];
+
+      const updatedNameFromAttributes = normalizedAttributes.find(
+        (attr) => attr.attributeKey === "spatialFeature.refWilayah"
+      )?.attributeValue;
+
+      const propsForFocus = {
+        id: String(
+          updatedFeature.id ?? (focus as { id?: string })?.id ?? ""
+        ),
+        name:
+          updatedNameFromAttributes ||
+          metadataEditor.state.namaWilayah ||
+          (focus as { name?: string })?.name ||
+          "",
+        _rawAttributes: normalizedAttributes,
+      };
+
+      syncFocusWithProps(propsForFocus, resolvedLayerId);
+
+      window.dispatchEvent(
+        new CustomEvent("apply-feature-props", {
+          detail: {
+            id: (focus as { id?: string })?.id,
+            layerId: (focus as { layerId?: string })?.layerId,
+            updates: detail?.updates ?? {},
+            deletes: detail?.deletes ?? [],
+            reloadLayer: true,
+            skipServerUpdate: true,
+            updatedFeature,
+            updatedRawAttributes: normalizedAttributes,
+          },
+        })
+      );
+    },
+    [focus, metadataEditor.state.namaWilayah, syncFocusWithProps]
   );
 
   // Set up event listeners for auto-close and focus refresh
@@ -940,68 +1006,8 @@ export default function FocusCard() {
 
         shouldAutoCloseRef.current = true;
 
-        const resolvedLayerId = String(
-          (focus as { layerId?: string })?.layerId ?? ""
-        );
-
-        const normalizedAttributes: SpatialFeatureAttribute[] = Array.isArray(
-          updatedFeature.attribute
-        )
-          ? (updatedFeature.attribute as SpatialFeatureAttribute[]).map(
-              (attr, index) => ({
-                ...attr,
-                attributeIndex:
-                  attr.attributeIndex !== undefined
-                    ? attr.attributeIndex
-                    : index,
-              })
-            )
-          : [];
-
-        const updatedNameFromAttributes = normalizedAttributes.find(
-          (attr) => attr.attributeKey === "spatialFeature.refWilayah"
-        )?.attributeValue;
-
-        const propsForFocus = {
-          id: String(updatedFeature.id ?? (focus as { id?: string })?.id ?? ""),
-          name:
-            updatedNameFromAttributes ||
-            metadataEditor.state.namaWilayah ||
-            (focus as { name?: string })?.name ||
-            "",
-          _rawAttributes: normalizedAttributes,
-        };
-
         updateProgress(88, "Sinkronisasi metadata dengan peta...");
-        syncFocusWithProps(propsForFocus, resolvedLayerId);
-
-        console.log(
-          "FocusCard: Dispatching apply-feature-props event with updated feature",
-          {
-            id: (focus as { id?: string; layerId?: string })?.id,
-            layerId: (focus as { id?: string; layerId?: string }).layerId,
-            updates,
-            deletes,
-            reloadLayer: true,
-            skipServerUpdate: true,
-          }
-        );
-
-        window.dispatchEvent(
-          new CustomEvent("apply-feature-props", {
-            detail: {
-              id: (focus as { id?: string; layerId?: string })?.id,
-              layerId: (focus as { id?: string; layerId?: string }).layerId,
-              updates,
-              deletes,
-              reloadLayer: true,
-              skipServerUpdate: true,
-              updatedFeature,
-              updatedRawAttributes: normalizedAttributes,
-            },
-          })
-        );
-
+        applyServerFeatureUpdate(updatedFeature, { updates, deletes });
         updateProgress(95, "Menuntaskan pembaruan antarmuka...");
         finishLoading();
         setToast({
@@ -1036,6 +1042,74 @@ export default function FocusCard() {
 
   const cancelSave = () => {
     setShowSaveConfirmation(false);
+  };
+
+  const requestDeleteAttribute = (attr: EditableAttribute) => {
+    if (metadataEditor.state.isLoading || attr.isSaving) {
+      return;
+    }
+    shouldAutoCloseRef.current = false;
+    setAttributePendingDeletion(attr);
+    setShowDeleteAttributeConfirmation(true);
+  };
+
+  const cancelDeleteAttribute = () => {
+    setShowDeleteAttributeConfirmation(false);
+    setAttributePendingDeletion(null);
+    shouldAutoCloseRef.current = true;
+  };
+
+  const confirmDeleteAttribute = async () => {
+    const target = attributePendingDeletion;
+    setShowDeleteAttributeConfirmation(false);
+    setAttributePendingDeletion(null);
+
+    if (!target) {
+      shouldAutoCloseRef.current = true;
+      return;
+    }
+
+    if (target.isNew) {
+      metadataEditor.actions.removeAttribute(target.id);
+      shouldAutoCloseRef.current = true;
+      setToast({
+        type: "success",
+        msg: "Atribut berhasil dihapus.",
+      });
+      return;
+    }
+
+    try {
+      startLoading("Menghapus atribut...");
+      updateProgress(10, "Menyiapkan penghapusan atribut...");
+
+      const deletedKey = `spatialFeature.${target.attributeKey}`;
+      const updatedFeature = await metadataEditor.actions.deleteAttribute(
+        target.id,
+        {
+          onProgress: (progress, message) =>
+            updateProgress(progress, message),
+        }
+      );
+
+      if (updatedFeature) {
+        updateProgress(88, "Memperbarui tampilan metadata...");
+        applyServerFeatureUpdate(updatedFeature, { deletes: [deletedKey] });
+      }
+
+      updateProgress(95, "Pembaruan selesai...");
+      setToast({
+        type: "success",
+        msg: "Atribut berhasil dihapus.",
+      });
+    } catch (error) {
+      console.error("Error deleting attribute:", error);
+      showError("Gagal menghapus atribut.");
+      setToast({ type: "error", msg: "Gagal menghapus atribut." });
+    } finally {
+      finishLoading();
+      shouldAutoCloseRef.current = true;
+    }
   };
 
   const cancelAll = () => {
@@ -1448,13 +1522,19 @@ export default function FocusCard() {
                       />
                       <button
                         type="button"
-                        className={`iconbtn ${attr.isNew ? "danger" : "ghost"}`}
-                        onClick={() =>
-                          metadataEditor.actions.removeAttribute(attr.id)
+                        className={`iconbtn delete-attr ${
+                          attr.isNew ? "danger" : "ghost"
+                        }`}
+                        onClick={() => requestDeleteAttribute(attr)}
+                        disabled={
+                          metadataEditor.state.isLoading || attr.isSaving
                         }
                         title={attr.isNew ? "Hapus atribut" : "Hapus atribut"}
+                        aria-label={`Hapus atribut ${attr.attributeKey}`}
                       >
-                        <span className="iconfocuscard">delete</span>
+                        <span className="iconfocuscard">
+                          {attr.isSaving ? "hourglass_empty" : "delete"}
+                        </span>
                       </button>
                       {attr.hasError && (
                         <div
@@ -1512,6 +1592,110 @@ export default function FocusCard() {
                     }}
                   >
                     <span className="iconfocuscard">cancel</span> Batal
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {showDeleteAttributeConfirmation && attributePendingDeletion &&
+        createPortal(
+          <div
+            className="modal-overlay"
+            onClick={cancelDeleteAttribute}
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(0,0,0,0.4)",
+              zIndex: 10000,
+            }}
+          >
+            <div
+              className="modal-panel"
+              onClick={(e) => e.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="delete-attribute-title"
+              aria-describedby="delete-attribute-description"
+              style={{
+                position: "absolute",
+                left: "50%",
+                top: "50%",
+                transform: "translate(-50%, -50%)",
+                maxWidth: 400,
+                width: "90%",
+                background: "#fff",
+                borderRadius: 12,
+                boxShadow: "0 12px 24px rgba(0,0,0,.25)",
+                overflow: "hidden",
+              }}
+            >
+              <div style={{ padding: "24px", textAlign: "center" }}>
+                <div
+                  id="delete-attribute-title"
+                  style={{
+                    fontSize: "18px",
+                    fontWeight: 600,
+                    marginBottom: "16px",
+                  }}
+                >
+                  Hapus atribut?
+                </div>
+                <div
+                  id="delete-attribute-description"
+                  style={{
+                    fontSize: "14px",
+                    color: "#6b7280",
+                    marginBottom: "24px",
+                  }}
+                >
+                  Atribut{" "}
+                  <strong>
+                    {attributePendingDeletion?.attributeKey || "ini"}
+                  </strong>{" "}
+                  akan dihapus dari metadata dan perubahan akan disimpan ke
+                  server.
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "12px",
+                    justifyContent: "center",
+                  }}
+                >
+                  <button
+                    className="btn-cancel"
+                    onClick={cancelDeleteAttribute}
+                    style={{
+                      padding: "10px 20px",
+                      border: "1px solid #d1d5db",
+                      background: "#fff",
+                      color: "#374151",
+                      borderRadius: 6,
+                      fontSize: "14px",
+                      fontWeight: 500,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Tidak
+                  </button>
+                  <button
+                    className="btn-save"
+                    onClick={confirmDeleteAttribute}
+                    style={{
+                      padding: "10px 20px",
+                      border: "none",
+                      background: "#ef4444",
+                      color: "#fff",
+                      borderRadius: 6,
+                      fontSize: "14px",
+                      fontWeight: 500,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Ya, hapus
                   </button>
                 </div>
               </div>

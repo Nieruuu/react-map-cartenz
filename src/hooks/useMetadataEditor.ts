@@ -18,6 +18,7 @@ export type EditableAttribute = {
   isNew?: boolean;
   isDirty?: boolean;
   isSaving?: boolean;
+  isDeleting?: boolean;
   hasError?: boolean;
   errorMessage?: string;
 };
@@ -49,12 +50,19 @@ export type UseMetadataEditorReturn = {
     updateAttribute: (id: string, field: keyof EditableAttribute, value: unknown) => void;
     addAttribute: () => void;
     removeAttribute: (id: string) => void;
+    deleteAttribute: (id: string, options?: SaveChangesOptions) => Promise<SpatialFeature | null>;
     validateAttribute: (id: string) => boolean;
     validateAll: () => boolean;
   };
 };
 
 const DEBOUNCE_DELAY = 500;
+
+const SYSTEM_ATTRIBUTE_KEYS = new Set([
+  'spatialFeature.type',
+  'spatialFeature.geometry',
+  'spatialFeature.refWilayah',
+]);
 
 export function useMetadataEditor(): UseMetadataEditorReturn {
   const [state, setState] = useState<MetadataEditorState>({
@@ -80,27 +88,17 @@ export function useMetadataEditor(): UseMetadataEditorReturn {
     };
   }, []);
 
-  const startEditing = useCallback((feature: SpatialFeature) => {
+  const applyFeatureToState = useCallback((feature: SpatialFeature) => {
     const editableAttributes: EditableAttribute[] = [];
-    
-    // System attributes that should be excluded from the editable list
-    const systemAttributes = new Set([
-      'spatialFeature.type',
-      'spatialFeature.geometry',
-      'spatialFeature.refWilayah'
-    ]);
-    
-    // Extract existing attributes, but exclude system attributes
+
     if (feature.attribute && Array.isArray(feature.attribute)) {
       feature.attribute.forEach(attr => {
-        // Skip system attributes
-        if (systemAttributes.has(attr.attributeKey)) {
+        if (SYSTEM_ATTRIBUTE_KEYS.has(attr.attributeKey)) {
           return;
         }
-        
-        // Extract the user-friendly key (remove spatialFeature. prefix)
+
         const displayKey = attr.attributeKey.replace(/^spatialFeature\./, '');
-        
+
         editableAttributes.push({
           id: String(attr.id),
           attributeKey: displayKey,
@@ -110,13 +108,16 @@ export function useMetadataEditor(): UseMetadataEditorReturn {
           isNew: false,
           isDirty: false,
           isSaving: false,
+          isDeleting: false,
           hasError: false,
         });
       });
     }
 
-    // Extract Nama Wilayah and ID Wilayah
-    const namaWilayah = feature.attribute?.find(attr => attr.attributeKey === 'spatialFeature.refWilayah')?.attributeValue || '';
+    const namaWilayah =
+      feature.attribute?.find(
+        attr => attr.attributeKey === 'spatialFeature.refWilayah'
+      )?.attributeValue || '';
     const idWilayah = String(feature.id || '');
 
     setState({
@@ -131,6 +132,10 @@ export function useMetadataEditor(): UseMetadataEditorReturn {
       validationErrors: {},
     });
   }, []);
+
+  const startEditing = useCallback((feature: SpatialFeature) => {
+    applyFeatureToState(feature);
+  }, [applyFeatureToState]);
 
   const cancelEditing = useCallback(() => {
     // Clear all debounce timers
@@ -260,6 +265,7 @@ export function useMetadataEditor(): UseMetadataEditorReturn {
       isNew: true,
       isDirty: true,
       isSaving: false,
+       isDeleting: false,
       hasError: false,
     };
 
@@ -295,6 +301,86 @@ export function useMetadataEditor(): UseMetadataEditorReturn {
       };
     });
   }, []);
+
+  const deleteAttribute = useCallback(async (id: string, options?: SaveChangesOptions): Promise<SpatialFeature | null> => {
+    const attribute = state.editableAttributes.find(attr => attr.id === id);
+
+    if (!attribute) {
+      return null;
+    }
+
+    // Handle unsaved attribute deletion locally without API call
+    if (attribute.isNew) {
+      setState(prev => {
+        const remaining = prev.editableAttributes.filter(attr => attr.id !== id);
+        const stillDirty = remaining.some(attr => attr.isDirty || attr.isNew);
+        return {
+          ...prev,
+          editableAttributes: remaining,
+          hasUnsavedChanges: stillDirty,
+        };
+      });
+      return null;
+    }
+
+    if (!state.featureId) {
+      return null;
+    }
+
+    setState(prev => ({
+      ...prev,
+      isLoading: true,
+      editableAttributes: prev.editableAttributes.map(attr =>
+        attr.id === id ? { ...attr, isSaving: true, isDeleting: true } : attr
+      ),
+    }));
+
+    const onProgress = options?.onProgress;
+
+    try {
+      onProgress?.(15, 'Mengambil metadata terbaru...');
+      const currentFeature = await getSpatialFeatureById(state.featureId);
+
+      const currentAttributes = Array.isArray(currentFeature.attribute)
+        ? [...currentFeature.attribute]
+        : [];
+
+      const attributeIdNumber = Number(attribute.id);
+      const fullKey = `spatialFeature.${attribute.attributeKey}`;
+
+      const filteredAttributes = currentAttributes.filter(attr => {
+        if (!Number.isNaN(attributeIdNumber) && attr.id === attributeIdNumber) {
+          return false;
+        }
+        if (Number.isNaN(attributeIdNumber) && attr.attributeKey === fullKey) {
+          return false;
+        }
+        return true;
+      });
+
+      if (filteredAttributes.length === currentAttributes.length) {
+        throw new Error('Attribute tidak ditemukan atau sudah dihapus.');
+      }
+
+      onProgress?.(45, 'Menghapus atribut dari server...');
+      await updateSpatialFeature(state.featureId, filteredAttributes);
+
+      onProgress?.(70, 'Memuat metadata terbaru...');
+      const freshFeature = await getSpatialFeatureById(state.featureId);
+
+      applyFeatureToState(freshFeature);
+      return freshFeature;
+    } catch (error) {
+      setState(prev => ({
+        ...prev,
+        isLoading: false,
+        editableAttributes: prev.editableAttributes.map(attr =>
+          attr.id === id ? { ...attr, isSaving: false, isDeleting: false } : attr
+        ),
+      }));
+      throw error;
+    }
+  }, [state, applyFeatureToState]);
 
   const saveChanges = useCallback(async (options?: SaveChangesOptions): Promise<SpatialFeature | null> => {
     if (!state.featureId || !state.originalFeature) return null;
@@ -438,53 +524,7 @@ export function useMetadataEditor(): UseMetadataEditorReturn {
       onProgress?.(82, 'Memperbarui data editor...');
 
       // STEP 5: Update state with the new feature data
-      const editableAttributes: EditableAttribute[] = [];
-      
-      // System attributes that should be excluded from the editable list
-      const systemAttributes = new Set([
-        'spatialFeature.type',
-        'spatialFeature.geometry',
-        'spatialFeature.refWilayah'
-      ]);
-
-      if (freshFeature.attribute && Array.isArray(freshFeature.attribute)) {
-        freshFeature.attribute.forEach(attr => {
-          // Skip system attributes
-          if (systemAttributes.has(attr.attributeKey)) {
-            return;
-          }
-          
-          // Extract the user-friendly key (remove spatialFeature. prefix)
-          const displayKey = attr.attributeKey.replace(/^spatialFeature\./, '');
-          
-          editableAttributes.push({
-            id: String(attr.id),
-            attributeKey: displayKey,
-            attributeValue: attr.attributeValue,
-            attributeLabel: attr.attributeLabel || displayKey,
-            attributeValueType: attr.attributeValueType || 1,
-            isNew: false,
-            isDirty: false,
-            isSaving: false,
-            hasError: false,
-          });
-        });
-      }
-
-      const newNamaWilayah = freshFeature.attribute?.find(attr => attr.attributeKey === 'spatialFeature.refWilayah')?.attributeValue || '';
-      const newIdWilayah = String(freshFeature.id || '');
-
-      setState({
-        featureId: freshFeature.id,
-        isEditing: true,
-        isLoading: false,
-        hasUnsavedChanges: false,
-        originalFeature: freshFeature,
-        editableAttributes,
-        namaWilayah: newNamaWilayah,
-        idWilayah: newIdWilayah,
-        validationErrors: {},
-      });
+      applyFeatureToState(freshFeature);
 
       return freshFeature;
     } catch (error) {
@@ -513,7 +553,7 @@ export function useMetadataEditor(): UseMetadataEditorReturn {
       onProgress?.(0, ''); // reset progress indicator in case of error
       return null;
     }
-  }, [state, validateAll]);
+  }, [state, validateAll, applyFeatureToState]);
 
   return {
     state,
@@ -526,6 +566,7 @@ export function useMetadataEditor(): UseMetadataEditorReturn {
       updateAttribute,
       addAttribute,
       removeAttribute,
+      deleteAttribute,
       validateAttribute,
       validateAll,
     },

@@ -868,6 +868,16 @@ body {
   background: #fef2f2;
 }
 
+.iconbtn.delete-attr:hover {
+  background: #ef4444;
+  border-color: #ef4444;
+  color: #ffffff;
+}
+
+.iconbtn.delete-attr:hover .iconfocuscard {
+  color: inherit;
+}
+
 .rd-editor {
   border-top: 1px solid var(--line);
   background: #fff;
