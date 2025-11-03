@@ -138,7 +138,7 @@ const TranslateLayerModal: React.FC<TranslateLayerModalProps> = ({
               fontSize: "11px",
             }}
           >
-            Enter = Simpan, Esc = Selesai
+            Enter = Simpan, Esc = Batal
           </span>
         </span>
       </div>
@@ -156,7 +156,7 @@ const TranslateLayerModal: React.FC<TranslateLayerModalProps> = ({
           type="button"
           onClick={onFinish}
           disabled={isSaving}
-          title="Keluar dari mode geser layer (Esc)"
+          title="Batalkan perubahan dan keluar dari mode geser layer (Esc)"
           style={{
             border: "1px solid #6366f1",
             backgroundColor: "white",
@@ -170,7 +170,7 @@ const TranslateLayerModal: React.FC<TranslateLayerModalProps> = ({
             opacity: isSaving ? 0.6 : 1,
           }}
         >
-          Selesai
+          Batal
         </button>
 
         <button

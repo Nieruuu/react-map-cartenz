@@ -263,7 +263,7 @@ const VertexEditingModal: React.FC<VertexEditingModalProps> = ({
               fontSize: "11px",
             }}
           >
-            Enter = Simpan, Esc = Selesai
+            Enter = Simpan, Esc = Batal
           </span>
         </span>
       </div>
@@ -281,7 +281,7 @@ const VertexEditingModal: React.FC<VertexEditingModalProps> = ({
           type="button"
           onClick={handleFinishClick}
           disabled={isSaving}
-          title="Keluar dari mode edit (Esc)"
+          title="Batalkan perubahan dan keluar dari mode edit (Esc)"
           style={{
             border: "1px solid #0ea5e9",
             backgroundColor: "white",
@@ -295,7 +295,7 @@ const VertexEditingModal: React.FC<VertexEditingModalProps> = ({
             opacity: isSaving ? 0.6 : 1,
           }}
         >
-          Selesai
+          Batal
         </button>
 
         <button

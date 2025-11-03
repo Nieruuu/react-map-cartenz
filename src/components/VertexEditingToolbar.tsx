@@ -134,7 +134,7 @@ const VertexEditingToolbar: React.FC<VertexEditingToolbarProps> = ({
               fontSize: "11px",
             }}
           >
-            Enter = Simpan, Esc = Selesai
+            Enter = Simpan, Esc = Batal
           </span>
         </span>
       </div>
@@ -152,7 +152,7 @@ const VertexEditingToolbar: React.FC<VertexEditingToolbarProps> = ({
           type="button"
           onClick={onFinish}
           disabled={isSaving}
-          title="Keluar dari mode edit (Esc)"
+          title="Batalkan perubahan dan keluar dari mode edit (Esc)"
           style={{
             border: "1px solid #0ea5e9",
             backgroundColor: "white",
@@ -166,7 +166,7 @@ const VertexEditingToolbar: React.FC<VertexEditingToolbarProps> = ({
             opacity: isSaving ? 0.6 : 1,
           }}
         >
-          Selesai
+          Batal
         </button>
 
         <button

@@ -116,6 +116,8 @@ const getActionButtonStyle = (baseColor: string, disabled: boolean) => ({
   transition: "all 0.2s ease",
 });
 
+const DEFAULT_PROJECTION = "EPSG:3857";
+
 function isTypedNumericArray(value: unknown): value is ArrayLike<number> {
   return (
     value != null &&
@@ -501,6 +503,70 @@ export default function LeftDock() {
     selectLayer,
   } = useMapStore();
   const { map, addLayer, layers } = useLayersStore();
+
+  const readGeometryFromSnapshot = useCallback(
+    (snapshot: string) => {
+      try {
+        const formatter = new GeoJSON();
+        const parsed = JSON.parse(snapshot);
+
+        const projectionObj = map?.getView?.().getProjection();
+        const projectionCode =
+          typeof projectionObj?.getCode === "function"
+            ? projectionObj.getCode() || DEFAULT_PROJECTION
+            : DEFAULT_PROJECTION;
+
+        return formatter.readGeometry(parsed, {
+          dataProjection: projectionCode,
+          featureProjection: projectionCode,
+        }) as Geometry;
+      } catch (error) {
+        console.warn("Gagal mengembalikan geometri dari snapshot:", error);
+        return null;
+      }
+    },
+    [map]
+  );
+
+  const restoreFeatureGeometryFromSnapshot = useCallback(
+    (feature: OLFeature<Geometry> | null, snapshot: string | null) => {
+      if (!feature || !snapshot) return false;
+      const geometry = readGeometryFromSnapshot(snapshot);
+      if (!geometry) return false;
+      feature.setGeometry(geometry);
+      feature.changed?.();
+      map?.renderSync?.();
+      map?.render?.();
+      return true;
+    },
+    [map, readGeometryFromSnapshot]
+  );
+
+  const restoreLayerGeometriesFromSnapshot = useCallback(
+    (
+      features: OLFeature<Geometry>[] | null,
+      snapshots: Map<string, string> | null
+    ) => {
+      if (!features || !snapshots || snapshots.size === 0) return false;
+      let restoredAny = false;
+      features.forEach((feature) => {
+        const featureId = String(feature.get("id") || "");
+        const snapshot = snapshots.get(featureId);
+        if (!snapshot) return;
+        const geometry = readGeometryFromSnapshot(snapshot);
+        if (!geometry) return;
+        feature.setGeometry(geometry);
+        feature.changed?.();
+        restoredAny = true;
+      });
+      if (restoredAny) {
+        map?.renderSync?.();
+        map?.render?.();
+      }
+      return restoredAny;
+    },
+    [map, readGeometryFromSnapshot]
+  );
 
   // Expose test functions to global scope for debugging
   if (typeof window !== "undefined") {
@@ -3737,6 +3803,12 @@ export default function LeftDock() {
 
   // Vertex editing handlers
   const handleVertexEditFinish = () => {
+    if (originalGeometryRef.current) {
+      restoreFeatureGeometryFromSnapshot(
+        targetFeatureRef.current,
+        originalGeometryRef.current
+      );
+    }
     setShowVertexEditingModal(false);
     setIsVertexEditingDirty(false);
     setIsSavingVertexEdit(false);
@@ -3837,6 +3909,12 @@ export default function LeftDock() {
 
   // Translate feature handlers
   const handleTranslateFeatureFinish = () => {
+    if (originalTranslateGeometryRef.current) {
+      restoreFeatureGeometryFromSnapshot(
+        targetFeatureRef.current,
+        originalTranslateGeometryRef.current
+      );
+    }
     setShowTranslateFeatureModal(false);
     setIsTranslateFeatureDirty(false);
     setIsSavingTranslateFeature(false);
@@ -3847,6 +3925,12 @@ export default function LeftDock() {
   };
 
   const handleTranslateFeatureCancel = () => {
+    if (originalTranslateGeometryRef.current) {
+      restoreFeatureGeometryFromSnapshot(
+        targetFeatureRef.current,
+        originalTranslateGeometryRef.current
+      );
+    }
     setShowTranslateFeatureModal(false);
     setIsTranslateFeatureDirty(false);
     setIsSavingTranslateFeature(false);
@@ -3947,6 +4031,12 @@ export default function LeftDock() {
 
   // Translate layer handlers
   const handleTranslateLayerFinish = () => {
+    if (originalLayerGeometriesRef.current) {
+      restoreLayerGeometriesFromSnapshot(
+        targetLayerFeaturesRef.current,
+        originalLayerGeometriesRef.current
+      );
+    }
     setShowTranslateLayerModal(false);
     setIsTranslateLayerDirty(false);
     setIsSavingTranslateLayer(false);
@@ -3957,6 +4047,12 @@ export default function LeftDock() {
   };
 
   const handleTranslateLayerCancel = () => {
+    if (originalLayerGeometriesRef.current) {
+      restoreLayerGeometriesFromSnapshot(
+        targetLayerFeaturesRef.current,
+        originalLayerGeometriesRef.current
+      );
+    }
     setShowTranslateLayerModal(false);
     setIsTranslateLayerDirty(false);
     setIsSavingTranslateLayer(false);

@@ -201,7 +201,7 @@ export default function TranslateFeatureModal({
               opacity: isSaving ? 0.6 : 1,
             }}
           >
-            Selesai
+            Batal
           </button>
 
           <button
