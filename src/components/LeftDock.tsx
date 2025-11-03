@@ -673,7 +673,7 @@ export default function LeftDock() {
     useState<number>(0);
 
   // API import state
-  const [importMode, setImportMode] = useState<"local" | "api">("local");
+  const [importMode, setImportMode] = useState<"local" | "api">("api");
   const [isApiImportInProgress, setIsApiImportInProgress] = useState(false);
 
   // Function to extract layer type from filename
@@ -1006,8 +1006,19 @@ export default function LeftDock() {
   };
 
   type PanelKey = "draw" | "basemap" | "io";
-  const [openKey, setOpenKey] = useState<PanelKey | null>(null);
+  const [openKey, setOpenKey] = useState<PanelKey | null>("io");
   const isOpen = (k: PanelKey) => openKey === k;
+
+  const initialPanelRef = useRef<PanelKey | null>(openKey);
+  useEffect(() => {
+    if (initialPanelRef.current) {
+      window.dispatchEvent(
+        new CustomEvent("panel-header-click", {
+          detail: { panel: initialPanelRef.current },
+        })
+      );
+    }
+  }, []);
   const onPanelHeaderClick = (k: PanelKey) => {
     const wasClosed = openKey !== k;
     setOpenKey(openKey === k ? null : k);
@@ -3830,7 +3841,7 @@ export default function LeftDock() {
 
   /* ---------- Load & Export UI ---------- */
   const [openLoad, setOpenLoad] = useState(false);
-  const [loadTab, setLoadTab] = useState<"local" | "api">("local");
+  const [loadTab, setLoadTab] = useState<"local" | "api">("api");
   const [openExport, setOpenExport] = useState(false);
   const openExportModal = () => setOpenExport(true);
 
@@ -4608,35 +4619,6 @@ export default function LeftDock() {
               >
                 <button
                   type="button"
-                  onClick={() => setImportMode("local")}
-                  style={{
-                    flex: 1,
-                    padding: "8px 12px",
-                    fontSize: 12,
-                    fontWeight: 500,
-                    border: "none",
-                    borderRadius: 6,
-                    background:
-                      importMode === "local" ? "#ffffff" : "transparent",
-                    color: importMode === "local" ? "#111827" : "#6b7280",
-                    cursor: "pointer",
-                    transition: "all 0.2s ease",
-                    boxShadow:
-                      importMode === "local"
-                        ? "0 1px 2px rgba(0,0,0,0.05)"
-                        : "none",
-                  }}
-                >
-                  <span
-                    className="icon"
-                    style={{ fontSize: 14, marginRight: 4 }}
-                  >
-                    folder
-                  </span>
-                  Local Import
-                </button>
-                <button
-                  type="button"
                   onClick={() => setImportMode("api")}
                   style={{
                     flex: 1,
@@ -4663,6 +4645,35 @@ export default function LeftDock() {
                     cloud_upload
                   </span>
                   API Import
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setImportMode("local")}
+                  style={{
+                    flex: 1,
+                    padding: "8px 12px",
+                    fontSize: 12,
+                    fontWeight: 500,
+                    border: "none",
+                    borderRadius: 6,
+                    background:
+                      importMode === "local" ? "#ffffff" : "transparent",
+                    color: importMode === "local" ? "#111827" : "#6b7280",
+                    cursor: "pointer",
+                    transition: "all 0.2s ease",
+                    boxShadow:
+                      importMode === "local"
+                        ? "0 1px 2px rgba(0,0,0,0.05)"
+                        : "none",
+                  }}
+                >
+                  <span
+                    className="icon"
+                    style={{ fontSize: 14, marginRight: 4 }}
+                  >
+                    folder
+                  </span>
+                  Local Import
                 </button>
               </div>
               {importMode === "api" && (
