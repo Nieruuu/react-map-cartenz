@@ -15,6 +15,8 @@ This is a **Tax Map React Application** built with TypeScript, Vite, and OpenLay
   - shpjs (for shapefile parsing)
   - jszip (for zip file handling)
 - **Development Tools**: ESLint, TypeScript
+- **Deployment**: Docker with Nginx reverse proxy
+- **Production Server**: Express with http-proxy-middleware for preview builds
 
 ## Key Features
 
@@ -111,11 +113,20 @@ tax-map-react/
 │   └── vite-env.d.ts            # Vite environment types
 
 ├── .env.example                 # Environment variables template
+├── .env.production              # Production environment variables
 ├── .gitignore                   # Git ignore file
+├── .dockerignore                # Docker ignore file
+├── API_401_SOLUTION.md          # API authentication troubleshooting guide
+├── docker-compose.yml           # Docker Compose configuration
+├── Dockerfile                   # Multi-stage Docker build configuration
+├── DOCKER_DEPLOYMENT.md         # Docker deployment guide
 ├── eslint.config.js             # ESLint configuration
+├── FINAL_SOLUTION.md            # Final solution documentation
 ├── index.html                   # HTML entry point
+├── nginx.conf                   # Nginx configuration for Docker
 ├── package.json                 # NPM package configuration
 ├── package-lock.json            # NPM lock file
+├── preview-server.cjs           # Express preview server with proxy
 ├── tsconfig.app.json            # TypeScript app configuration
 ├── tsconfig.json                # TypeScript base configuration
 ├── tsconfig.node.json           # TypeScript Node configuration
@@ -499,6 +510,23 @@ The authentication system provides comprehensive state management:
 
 ## Deployment
 
+### Docker Deployment (Production)
+- **Multi-stage Docker build**: Builds React app and serves with Nginx
+- **Nginx reverse proxy**: Handles API requests to `https://retfw.smartgov.id/framework`
+- **CORS handling**: Eliminates CORS issues through proxying
+- **Security features**: Non-root user, security headers, SSL verification
+- **Performance optimizations**: Gzip compression and static asset caching
+- **Health checks**: Container health monitoring
+- **Access**: `http://localhost:8080` (when running with Docker Compose)
+
+### Preview Server (Development/Testing)
+- **Express server**: Custom preview server with proxy capabilities
+- **API proxying**: Proxies `/api/*` to `https://retfw.smartgov.id/framework/*`
+- **CORS support**: Handles preflight OPTIONS requests and adds proper headers
+- **SPA routing**: Supports React Router for single-page application
+- **Access**: `http://localhost:4174` (when running with `npm run preview:proxy`)
+
+### Standard Vite Build
 - Built with Vite for optimal performance
 - Production builds optimized with TypeScript compilation
 - Static assets served from public directory
@@ -568,6 +596,77 @@ The authentication system provides comprehensive state management:
 - Optimized bundle size by removing dead code
 - Enhanced debugging capabilities with comprehensive logging
 - Improved error handling and user feedback systems
+
+## Deployment Commands
+
+### Docker Deployment
+```bash
+# Build and start with Docker Compose
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop container
+docker-compose down
+
+# Rebuild with latest changes
+docker-compose up -d --build
+```
+
+### Preview Server with Proxy
+```bash
+# Build the application
+npm run build
+
+# Start preview server with proxy
+npm run preview:proxy
+
+# Access at http://localhost:4174
+```
+
+### Standard Development
+```bash
+# Development server with proxy
+npm run dev
+
+# Standard build
+npm run build
+
+# Standard preview (without proxy - not recommended for API testing)
+npm run preview
+```
+
+## Environment Configuration
+
+### Development Environment
+- **API Proxy**: Vite dev server proxies `/api/*` to `https://retfw.smartgov.id/framework/*`
+- **Hot Reload**: Enabled for development
+- **Debug Mode**: API debugging enabled by default
+- **Default Credentials**: Built-in development credentials (sa/pass@word1)
+
+### Production Environment
+- **API Proxy**: Nginx/Express proxies `/api/*` to `https://retfw.smartgov.id/framework/*`
+- **Static Serving**: Optimized static file serving
+- **Security**: Production security headers and configurations
+- **Performance**: Gzip compression and asset caching enabled
+
+## Troubleshooting
+
+### 401 Unauthorized Errors
+- **Solution**: Use Docker deployment or preview server with proxy
+- **Avoid**: Standard Vite preview without proxy
+- **Documentation**: See `API_401_SOLUTION.md` for detailed troubleshooting
+
+### CORS Issues
+- **Docker**: Automatically handled by Nginx reverse proxy
+- **Preview Server**: Automatically handled by Express proxy middleware
+- **Development**: Handled by Vite proxy configuration
+
+### Authentication Issues
+- **Token Storage**: Check localStorage for authentication tokens
+- **WIB Timezone**: All timestamps displayed in Indonesia Western Time (UTC+7)
+- **Auto-Login**: Enabled by default in development and production
 
 ---
 

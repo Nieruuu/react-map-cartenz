@@ -71,11 +71,20 @@ tax-map-react/
 │   └── vite-env.d.ts            # Vite environment types
 
 ├── .env.example                 # Environment variables template
+├── .env.production              # Production environment variables
 ├── .gitignore                   # Git ignore file
+├── .dockerignore                # Docker ignore file
+├── API_401_SOLUTION.md          # API authentication troubleshooting guide
+├── docker-compose.yml           # Docker Compose configuration
+├── Dockerfile                   # Multi-stage Docker build configuration
+├── DOCKER_DEPLOYMENT.md         # Docker deployment guide
 ├── eslint.config.js             # ESLint configuration
+├── FINAL_SOLUTION.md            # Final solution documentation
 ├── index.html                   # HTML entry point
+├── nginx.conf                   # Nginx configuration for Docker
 ├── package.json                 # NPM package configuration
 ├── package-lock.json            # NPM lock file
+├── preview-server.cjs           # Express preview server with proxy
 ├── tsconfig.app.json            # TypeScript app configuration
 ├── tsconfig.json                # TypeScript base configuration
 ├── tsconfig.node.json           # TypeScript Node configuration
@@ -418,11 +427,157 @@ VITE_ENABLE_API_DEBUGGING=false
 - **TypeScript Compliance**: Fixed all TypeScript warnings
 - **Bundle Size Optimization**: Removed dead code and unused functions
 
+## Deployment Architecture
+
+### Docker Deployment (Production)
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Docker Container                         │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐     │
+│  │   Nginx     │    │   React     │    │   Static    │     │
+│  │  Reverse    │    │    SPA      │    │   Assets    │     │
+│  │   Proxy     │    │             │    │             │     │
+│  │             │    │             │    │             │     │
+│  │ • API Proxy │    │ • OpenLayers│    │ • JS/CSS    │     │
+│  │ • CORS      │    │ • UI       │    │ • Images    │     │
+│  │ • Security  │    │ • State     │    │ • Fonts     │     │
+│  │ • Gzip      │    │ • Auth      │    │             │     │
+│  └─────────────┘    └─────────────┘    └─────────────┘     │
+│                                                             │
+│  ┌─────────────────────────────────────────────────────────┐ │
+│  │              External API (SmartGov)                    │ │
+│  │         https://retfw.smartgov.id/framework            │ │
+│  └─────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Preview Server (Development/Testing)
+```
+┌─────────────────────────────────────────────────────────────┐
+│                Express Preview Server                       │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐     │
+│  │   Express   │    │   React     │    │   Static    │     │
+│  │    Proxy    │    │    SPA      │    │   Assets    │     │
+│  │             │    │             │    │             │     │
+│  │ • API Proxy │    │ • OpenLayers│    │ • JS/CSS    │     │
+│  │ • CORS      │    │ • UI       │    │ • Images    │     │
+│  │ • SPA Route │    │ • State     │    │ • Fonts     │     │
+│  │ • Headers   │    │ • Auth      │    │             │     │
+│  └─────────────┘    └─────────────┘    └─────────────┘     │
+│                                                             │
+│  ┌─────────────────────────────────────────────────────────┐ │
+│  │              External API (SmartGov)                    │ │
+│  │         https://retfw.smartgov.id/framework            │ │
+│  └─────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Deployment Files
+
+### Docker Configuration
+- **Dockerfile**: Multi-stage build with Node.js builder and Nginx production
+- **docker-compose.yml**: Container orchestration with health checks
+- **nginx.conf**: Production-ready Nginx configuration with reverse proxy
+- **.dockerignore**: Files excluded from Docker build context
+
+### Preview Server
+- **preview-server.cjs**: Express server with http-proxy-middleware
+- Handles API proxying, CORS, and SPA routing for preview builds
+
+### Documentation
+- **API_401_SOLUTION.md**: Comprehensive troubleshooting guide for 401 errors
+- **DOCKER_DEPLOYMENT.md**: Complete Docker deployment guide
+- **FINAL_SOLUTION.md**: Summary of solutions for authentication issues
+
+## Environment Configuration
+
+### Development Environment (.env.example)
+```bash
+VITE_API_BASE_URL=/api
+VITE_API_PROXY_URL=/api
+VITE_NODE_ENV=development
+VITE_APP_TITLE=Tax Map React
+VITE_PROXY_TARGET=https://retfw.smartgov.id
+VITE_PROXY_PATH=/framework
+VITE_ENABLE_API_DEBUG=true
+VITE_ENABLE_FEATURE_GROUPS=true
+VITE_AUTH_AUTO_LOGIN=true
+VITE_AUTH_REFRESH_ENABLED=true
+VITE_AUTH_DEFAULT_USER=sa
+VITE_AUTH_DEFAULT_PASS=pass@word1
+```
+
+### Production Environment (.env.production)
+```bash
+VITE_API_BASE_URL=/api
+VITE_API_PROXY_URL=/api
+VITE_NODE_ENV=production
+VITE_APP_TITLE=Tax Map React
+VITE_PROXY_TARGET=https://retfw.smartgov.id
+VITE_PROXY_PATH=/framework
+VITE_ENABLE_API_DEBUG=false
+VITE_ENABLE_FEATURE_GROUPS=true
+VITE_AUTH_AUTO_LOGIN=true
+VITE_AUTH_REFRESH_ENABLED=true
+```
+
+## Package Scripts
+
+### Development
+```json
+{
+  "dev": "vite",
+  "lint": "eslint .",
+  "build": "tsc -b && vite build",
+  "preview": "vite preview",
+  "preview:proxy": "node preview-server.cjs"
+}
+```
+
+### Docker Commands
+```bash
+# Build and start
+docker-compose up -d
+
+# Rebuild with changes
+docker-compose up -d --build
+
+# View logs
+docker-compose logs -f
+
+# Stop container
+docker-compose down
+```
+
+## API Proxy Configuration
+
+### Development (Vite)
+- Proxy: `/api/*` → `https://retfw.smartgov.id/framework/*`
+- Headers: Origin, Referer, Accept
+- CORS: Handled by Vite dev server
+
+### Production (Nginx)
+- Proxy: `/api/*` → `https://retfw.smartgov.id/framework/*`
+- Headers: Comprehensive CORS and security headers
+- SSL: Upstream SSL verification
+- Performance: Gzip compression and caching
+
+### Preview (Express)
+- Proxy: `/api/*` → `https://retfw.smartgov.id/framework/*`
+- Headers: CORS headers for all requests
+- Preflight: OPTIONS request handling
+- SPA: Fallback to index.html for client-side routing
+
 ---
 
-**Last Updated**: October 2025
-**Architecture Version**: 2.0
+**Last Updated**: November 2025
+**Architecture Version**: 2.1
 **Framework**: React 19.1.1 with TypeScript
 **Authentication**: Enhanced with WIB timezone and state synchronization
 **Spatial Features**: Complete API integration with hierarchical grouping
+**Deployment**: Docker with Nginx and Express preview server
 **Code Quality**: Optimized with comprehensive cleanup and performance improvements
