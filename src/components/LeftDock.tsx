@@ -2697,14 +2697,19 @@ export default function LeftDock() {
         await deleteSpatialFeature(Number(featureId));
       }
 
+      let affectedLayerId: string | null = null;
       // Remove the feature from the local layer
       for (const le of layers) {
         const src = (le.layer as VectorLayer<VectorSource>).getSource?.();
         if (!src) continue;
         if (src.getFeatures().includes(feat)) {
           src.removeFeature(feat);
+          affectedLayerId = le.id;
           break;
         }
+      }
+      if (affectedLayerId) {
+        useLayersStore.getState().pruneLayerIfEmpty(affectedLayerId);
       }
 
       stopAll();

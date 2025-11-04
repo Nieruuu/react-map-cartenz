@@ -11,6 +11,7 @@ import Modify from "ol/interaction/Modify";
 import Select from "ol/interaction/Select";
 import { platformModifierKeyOnly } from "ol/events/condition";
 import { Fill, Stroke, Style, Text } from "ol/style";
+import { useLayersStore } from "./useLayersStore";
 
 export type BaseLayerKind =
   | "osm"
@@ -371,6 +372,9 @@ export const useMapStore = create<S>((set, get) => ({
       }
     }
     if (removed > 0) L.layer.changed();
+    if (removed > 0) {
+      useLayersStore.getState().pruneLayerIfEmpty(L.id);
+    }
   },
 
   // defaults

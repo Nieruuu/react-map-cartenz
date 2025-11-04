@@ -203,6 +203,7 @@ type S = {
 
   addLayer: (e: LayerEntry) => void;
   removeEntry: (id: string) => void;
+  pruneLayerIfEmpty: (id: string) => void;
   moveLayer: (fromIdx: number, toIdx: number) => void;
   setVisible: (id: string, v: boolean) => void;
   updateLayerName: (id: string, newName: string) => void;
@@ -248,6 +249,15 @@ export const useLayersStore = create<S>((set, get) => ({
       setTimeout(get()._applyOrder, 0);
       return { layers };
     }),
+  pruneLayerIfEmpty: (id) => {
+    const { layers, removeEntry } = get();
+    const L = layers.find((x) => x.id === id);
+    if (!L) return;
+    const source = L.layer.getSource?.();
+    const features = source?.getFeatures?.();
+    if (!features || features.length > 0) return;
+    removeEntry(id);
+  },
 
   moveLayer: (fromIdx, toIdx) =>
     set((s) => {
