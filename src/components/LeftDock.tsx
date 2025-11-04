@@ -2535,13 +2535,19 @@ export default function LeftDock() {
       return;
     }
 
+    const cachedLayerId = targetLayer.id;
+    const cachedFeatureId = selectedId ? String(selectedId) : null;
+
     const isMulti = mode === "multipolygon";
     closeAddToLayerModeDialog();
 
     // Start drawing workflow with target layer context
-    stopAll();
+    stopAll({ preserveFocus: true });
     setBusy(true);
-    setFocus?.(null);
+    selectLayer(cachedLayerId);
+    if (cachedFeatureId) {
+      setSelectedId?.(cachedFeatureId);
+    }
     setTargetLayerForAdd({
       id: targetLayer.id,
       name: targetLayer.name,
@@ -5688,7 +5694,7 @@ export default function LeftDock() {
                     borderRadius: 10,
                     border: "1px solid #d1d5db",
                     background:
-                      addToLayerMode === "polygon" ? "#f1f5f9" : "#ffffff",
+                      addToLayerMode === "polygon" ? "#ffffffff" : "#ffffff",
                     color: "#111827",
                     fontSize: "14px",
                     fontWeight: 600,
@@ -5705,7 +5711,7 @@ export default function LeftDock() {
                   <span
                     style={{
                       fontSize: "12px",
-                      color: "#64748b",
+                      color: "#000000ff",
                     }}
                   >
                     Satu batas area
@@ -5723,7 +5729,7 @@ export default function LeftDock() {
                     border: "1px solid #c7d2fe",
                     background:
                       addToLayerMode === "multipolygon" ? "#ede9fe" : "#ffffff",
-                    color: "#312e81",
+                    color: "#000000ff",
                     fontSize: "14px",
                     fontWeight: 600,
                     cursor: "pointer",
@@ -5738,8 +5744,8 @@ export default function LeftDock() {
                   </span>
                   <span
                     style={{
-                      fontSize: "12px",
-                      color: "#4c1d95",
+                      fontSize: "11px",
+                      color: "#000000ff",
                     }}
                   >
                     Beberapa area sekaligus
