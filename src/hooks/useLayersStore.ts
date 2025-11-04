@@ -8,7 +8,8 @@ import { Fill, Stroke, Style, Text } from "ol/style";
 
 /** ==== Types ==== */
 export type LayerKind = "kabupaten" | "kecamatan" | "kelurahan" | "custom";
-export type LabelMode = "kode" | "nama";
+export type AttributeLabelMode = `attr:${string}`;
+export type LabelMode = "kode" | "nama" | AttributeLabelMode;
 
 export type LayerStyleCfg = {
   borderColor: string;
@@ -45,25 +46,126 @@ const toRgba = (hex: string, a = 1) => {
 
 export const styleFromCfg = (cfg: LayerStyleCfg) => {
   const dash =
-    cfg.borderStyle === "Dashed" ? [6, 4] :
-    cfg.borderStyle === "Dotted" ? [2, 6] :
-    undefined;
+    cfg.borderStyle === "Dashed"
+      ? [6, 4]
+      : cfg.borderStyle === "Dotted"
+      ? [2, 6]
+      : undefined;
 
-  return (f: FeatureLike) => {
-    const get = (k: string) => (f as unknown as { get: (key: string) => unknown }).get?.(k);
+  const normalizeKey = (key: string | null | undefined) =>
+    (key || "").trim().toLowerCase();
 
-    // nama/kode umum yang sering ada di data administrasi
-    const nama =
-      get("name") || get("D_NM_KEC") || get("NAME") ||
-      get("KECAMATAN") || get("Kecamatan") || get("WADMKC") ||
-      get("NAMA_KEC") || get("NAMA") || get("nm_kec") || get("WADMKD");
-    const kode =
-      get("id") || get("KODE") || get("D_KD_KEC") || get("OBJECTID") || get("FID");
+  const getRawAttributes = (feature: any): any[] | undefined => {
+    if (!feature) return undefined;
+    const raw =
+      feature?.get?.("_rawAttributes") ?? (feature as any)?._rawAttributes;
+    return Array.isArray(raw) ? raw : undefined;
+  };
 
-    const label =
-      cfg.labelMode === "nama"
-        ? (nama ? String(nama).toUpperCase() : undefined)
-        : (kode ? String(kode) : undefined);
+  const getAttributeValue = (feature: any, key: string): string => {
+    if (!feature || !key) return "";
+    const normalizedKey = normalizeKey(key);
+    const toStringOrEmpty = (value: unknown) =>
+      value === undefined || value === null ? "" : String(value);
+
+    if (normalizedKey === "spatialfeature.refwilayah") {
+      const direct =
+        feature.get?.("regionName") ??
+        feature.get?.("name") ??
+        getAttributeValue(feature, "name");
+      if (direct) return toStringOrEmpty(direct);
+    }
+
+    if (normalizedKey === "spatialfeature.type") {
+      const direct =
+        feature.get?.("layerType") ??
+        feature.get?.("type") ??
+        getAttributeValue(feature, "type");
+      if (direct) return toStringOrEmpty(direct);
+    }
+
+    if (normalizedKey === "spatialfeature.uuid") {
+      const direct =
+        feature.get?.("id") ??
+        feature.get?.("uuid") ??
+        getAttributeValue(feature, "id");
+      if (direct) return toStringOrEmpty(direct);
+    }
+
+    const rawAttributes = getRawAttributes(feature);
+    if (rawAttributes) {
+      for (const attr of rawAttributes) {
+        const attrKey = normalizeKey(attr?.attributeKey);
+        if (!attrKey || attrKey !== normalizedKey) continue;
+        return toStringOrEmpty(attr?.attributeValue);
+      }
+    }
+
+    const props = feature.getProperties ? feature.getProperties() : {};
+    if (key in props) return toStringOrEmpty(props[key]);
+    const tail = key.includes(".") ? key.split(".").pop() : key;
+    if (tail && tail in props) return toStringOrEmpty(props[tail]);
+
+    return "";
+  };
+
+  const getDefaultName = (feature: any, fallback = ""): string => {
+    if (!feature) return fallback;
+    const byName = feature.get?.("name");
+    if (typeof byName === "string" && byName.trim()) return byName.trim();
+    const props = feature.getProperties ? feature.getProperties() : {};
+    const aliases = [
+      "name",
+      "NAME",
+      "Nama",
+      "nama",
+      "D_NM_KEC",
+      "NAMA_KEC",
+      "NM_KEC",
+      "KECAMATAN",
+      "Kecamatan",
+      "WADMKC",
+      "NAMA_KEL",
+      "NM_KEL",
+      "NAMA_DESA",
+      "NM_DESA",
+      "NAMA_KAB",
+      "NM_KAB",
+      "NAMA",
+    ];
+    for (const key of aliases) {
+      const value = props[key];
+      if (typeof value === "string" && value.trim()) return value.trim();
+    }
+    return fallback;
+  };
+
+  const resolveLabelText = (feature: FeatureLike): string => {
+    const mode = cfg.labelMode || "nama";
+    if (mode === "kode") {
+      const idValue =
+        (feature as any)?.get?.("id") ??
+        (feature as any)?.get?.("ID") ??
+        (feature as any)?.get?.("objectid") ??
+        (feature as any)?.get?.("OBJECTID");
+      return idValue ? String(idValue) : "";
+    }
+    if (mode === "nama") {
+      const name = getDefaultName(feature, "");
+      return name ? name.toUpperCase() : "";
+    }
+    if (mode.startsWith("attr:")) {
+      const attributeKey = mode.slice(5);
+      const attrValue = getAttributeValue(feature, attributeKey);
+      if (attrValue) return attrValue;
+      const fallbackName = getDefaultName(feature, "");
+      return fallbackName ? fallbackName.toUpperCase() : "";
+    }
+    return "";
+  };
+
+  return (feature: FeatureLike) => {
+    const labelText = resolveLabelText(feature);
 
     return new Style({
       fill: new Fill({ color: toRgba(cfg.fillColor, cfg.fillOpacity) }),
@@ -72,9 +174,9 @@ export const styleFromCfg = (cfg: LayerStyleCfg) => {
         width: cfg.borderWidth ?? 1.4,
         lineDash: dash,
       }),
-      text: label
+      text: labelText
         ? new Text({
-            text: label,
+            text: labelText,
             font: `${cfg.labelSize ?? 12}px ${cfg.labelFont || "Arial"}`,
             fill: new Fill({ color: cfg.labelColor || "#1f2937" }),
             stroke:

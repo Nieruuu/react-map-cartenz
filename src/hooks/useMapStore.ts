@@ -19,7 +19,8 @@ export type BaseLayerKind =
   | "esri_sat"
   | "xyz_terrain";
 
-export type LabelMode = "kode" | "nama";
+export type AttributeLabelMode = `attr:${string}`;
+export type LabelMode = "kode" | "nama" | AttributeLabelMode;
 export type LayerKind = "kabupaten" | "kecamatan" | "kelurahan" | "custom";
 
 export type LayerStyleCfg = {

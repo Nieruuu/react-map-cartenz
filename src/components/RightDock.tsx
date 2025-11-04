@@ -3,8 +3,135 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import OLMap from "ol/Map";
 import VectorLayer from "ol/layer/Vector";
 import VectorSource from "ol/source/Vector";
-import { useLayersStore, styleFromCfg } from "../hooks/useLayersStore";
+import {
+  useLayersStore,
+  styleFromCfg,
+  type LayerEntry,
+} from "../hooks/useLayersStore";
 import { useMapStore } from "../hooks/useMapStore";
+
+const ATTRIBUTE_LABEL_OVERRIDES: Record<string, string> = {
+  "spatialfeature.type": "Layer",
+};
+
+const IGNORED_ATTRIBUTE_KEYS = new Set([
+  "spatialfeature.geometry",
+  "spatialfeature.refwilayah",
+  "spatialfeature.uuid",
+]);
+
+const DUPLICATE_BASE_ATTRIBUTE_KEYS = new Set([
+  "name",
+  "nama",
+  "spatialfeature.name",
+  "id",
+  "spatialfeature.id",
+]);
+
+const normalizeAttributeKey = (key: string | null | undefined) =>
+  (key || "").trim().toLowerCase();
+
+const capitalize = (value: string) =>
+  value.length ? value.charAt(0).toUpperCase() + value.slice(1) : value;
+
+const humanizeLabel = (input: string): string => {
+  if (!input) return "";
+  const replaced = input
+    .replace(/[_\-]+/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!replaced) return "";
+  const words = replaced.split(" ");
+  return words
+    .map((word, index) =>
+      index === 0 ? capitalize(word.toLowerCase()) : word.toLowerCase()
+    )
+    .join(" ");
+};
+
+const determineDisplayLabel = (
+  attributeKey: string,
+  attributeLabel?: string
+): string => {
+  const override =
+    ATTRIBUTE_LABEL_OVERRIDES[normalizeAttributeKey(attributeKey)];
+  if (override) return override;
+  if (attributeLabel && attributeLabel.trim()) {
+    return humanizeLabel(attributeLabel.trim());
+  }
+  const tail = attributeKey.split(".").pop() || attributeKey;
+  return humanizeLabel(tail);
+};
+
+const computeLabelOptionsForLayer = (
+  layerEntry: LayerEntry,
+  _version?: number
+): Array<{ value: string; label: string }> => {
+  const baseOptions: Array<{ value: string; label: string }> = [
+    { value: "nama", label: "Nama" },
+    { value: "kode", label: "Kode" },
+  ];
+
+  const source = (
+    layerEntry.layer as VectorLayer<VectorSource>
+  ).getSource?.();
+  if (!source) return baseOptions;
+
+  const attributeLabels = new Map<string, string>();
+  const features = source.getFeatures?.() ?? [];
+
+  for (const feature of features) {
+    const rawAttributes =
+      (feature as any)?.get?.("_rawAttributes") ??
+      (feature as any)?._rawAttributes;
+    if (Array.isArray(rawAttributes)) {
+      for (const attr of rawAttributes) {
+        const key = attr?.attributeKey;
+        if (!key) continue;
+        const normalizedKey = normalizeAttributeKey(key);
+        if (IGNORED_ATTRIBUTE_KEYS.has(normalizedKey)) continue;
+        if (DUPLICATE_BASE_ATTRIBUTE_KEYS.has(normalizedKey)) continue;
+        const displayLabel = determineDisplayLabel(key, attr?.attributeLabel);
+        if (!attributeLabels.has(key)) {
+          attributeLabels.set(key, displayLabel);
+        }
+      }
+    }
+
+    const props = feature?.getProperties?.();
+    if (props) {
+      if (
+        !attributeLabels.has("spatialFeature.type") &&
+        (props.layerType || props.type)
+      ) {
+        attributeLabels.set("spatialFeature.type", "Layer");
+      }
+    }
+  }
+
+  const sortedAttributes = Array.from(attributeLabels.entries()).sort(
+    (a, b) => a[1].localeCompare(b[1])
+  );
+
+  const mergedOptions = [...baseOptions];
+  sortedAttributes.forEach(([key, label]) => {
+    mergedOptions.push({ value: `attr:${key}`, label });
+  });
+
+  return mergedOptions;
+};
+
+const deriveLabelForMode = (mode: string): string => {
+  if (mode === "nama") return "Nama";
+  if (mode === "kode") return "Kode";
+  if (mode.startsWith("attr:")) {
+    const attributeKey = mode.slice(5);
+    return determineDisplayLabel(attributeKey);
+  }
+  return humanizeLabel(mode);
+};
+
 
 export default function RightDock() {
   const { map, layers, moveLayer, setVisible, updateStyleCfg, removeEntry } =
@@ -19,6 +146,7 @@ export default function RightDock() {
 
   // Editor state
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [labelOptionsVersion, setLabelOptionsVersion] = useState(0);
   const [tempName, setTempName] = useState<string>("");
 
   // Fokus dari peta
@@ -54,12 +182,13 @@ export default function RightDock() {
     const handleRightDockRefresh = (event: Event) => {
       const { layerId, typeCode, reason } =
         (event as CustomEvent<any>).detail || {};
-      console.log(
-        `RightDock refresh requested for layer ${layerId}, type ${typeCode}, reason: ${reason}`
-      );
+    console.log(
+      `RightDock refresh requested for layer ${layerId}, type ${typeCode}, reason: ${reason}`
+    );
 
-      // Force re-render of the layer list by triggering a state update
-      setOpen((prev) => prev); // This triggers a re-render
+    // Force re-render of the layer list by triggering a state update
+    setOpen((prev) => prev); // This triggers a re-render
+    setLabelOptionsVersion((prev) => prev + 1);
 
       // If the layer was previously selected, maintain selection
       if (selectedLayerId === layerId) {
@@ -99,10 +228,19 @@ export default function RightDock() {
           });
         }, 100);
       }
+      setLabelOptionsVersion((prev) => prev + 1);
     };
     window.addEventListener(
       "ui-synchronization-complete",
       handleUISynchronizationComplete
+    );
+
+    const handleFeaturePropsApplied = () => {
+      setLabelOptionsVersion((prev) => prev + 1);
+    };
+    window.addEventListener(
+      "apply-feature-props",
+      handleFeaturePropsApplied as EventListener
     );
 
     return () => {
@@ -116,6 +254,10 @@ export default function RightDock() {
         "ui-synchronization-complete",
         handleUISynchronizationComplete
       );
+      window.removeEventListener(
+        "apply-feature-props",
+        handleFeaturePropsApplied as EventListener
+      );
     };
   }, [selectedLayerId]);
 
@@ -126,50 +268,10 @@ export default function RightDock() {
   }, [focus]);
 
   // helper kecil: ambil label dari feature, bukan nama layer
-  const pickFeatureLabel = (ft: any, mode: "nama" | "kode", fallback = "") => {
-    if (mode === "kode") return String(ft.get("id") || "");
-    // UTAMAKAN 'name' hasil edit
-    const byName = String(ft.get("name") || "");
-    if (byName) return byName;
-    // fallback: beberapa alias umum dari sumber impor
-    const props = ft.getProperties ? ft.getProperties() : {};
-    const keys = [
-      "D_NM_KEC",
-      "NAMA_KEC",
-      "NM_KEC",
-      "KECAMATAN",
-      "Kecamatan",
-      "WADMKC",
-      "NAMA_KEL",
-      "NM_KEL",
-      "NAMA_DESA",
-      "NM_DESA",
-      "NAMA_KAB",
-      "NM_KAB",
-      "NAME",
-      "name",
-      "NAMA",
-    ];
-    for (const k of keys) {
-      const v = props[k];
-      if (typeof v === "string" && v.trim()) return v.trim();
-    }
-    return fallback;
-  };
-
   const applyStyle = (id: string) => {
     const L = layers.find((l) => l.id === id);
     if (!L) return;
-    const base = styleFromCfg(L.styleCfg);
-    const mode = (L.styleCfg as any).labelMode || "nama";
-
-    (L.layer as VectorLayer<VectorSource>).setStyle((ft: any) => {
-      const s = base(ft).clone();
-      const t = s.getText?.();
-      if (t) t.setText(pickFeatureLabel(ft, mode));
-      return s;
-    });
-
+    (L.layer as VectorLayer<VectorSource>).setStyle(styleFromCfg(L.styleCfg));
     (L.layer as any).changed?.();
   };
 
@@ -442,6 +544,24 @@ export default function RightDock() {
           {layers.map((l, idx) => {
             const isDragging = draggingId === l.id;
             const isPreview = overIdx === idx && !isDragging;
+            const currentLabelMode =
+              (l.styleCfg as any).labelMode || "nama";
+            const labelOptionsRaw = computeLabelOptionsForLayer(
+              l,
+              labelOptionsVersion
+            );
+            const hasCurrentOption = labelOptionsRaw.some(
+              (opt) => opt.value === currentLabelMode
+            );
+            const labelOptions = hasCurrentOption
+              ? labelOptionsRaw
+              : [
+                  ...labelOptionsRaw,
+                  {
+                    value: currentLabelMode,
+                    label: deriveLabelForMode(currentLabelMode),
+                  },
+                ];
 
             return (
               <div
@@ -708,7 +828,7 @@ export default function RightDock() {
                       <label>
                         <span>Label Mode</span>
                         <select
-                          value={l.styleCfg.labelMode}
+                          value={currentLabelMode}
                           onChange={(e) => {
                             updateStyleCfg(l.id, {
                               labelMode: e.target.value as any,
@@ -716,8 +836,11 @@ export default function RightDock() {
                             applyStyle(l.id);
                           }}
                         >
-                          <option value="nama">Nama</option>
-                          <option value="kode">Kode</option>
+                          {labelOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
                         </select>
                       </label>
                     </div>

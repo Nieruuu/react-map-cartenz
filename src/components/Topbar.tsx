@@ -145,7 +145,6 @@ export default function Topbar() {
 
       <div className="tabs">
         <div className="tab active">Peta</div>
-        <div className="tab">Others</div>
       </div>
 
       <div className="spacer" />

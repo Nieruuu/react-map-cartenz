@@ -2655,17 +2655,6 @@ export default function TaxMap() {
         const isHovered = featureId === hoveredId;
 
         const style = originalStyleFn(feature).clone();
-        const t = (style as any).getText?.();
-        if (t) {
-          const mode = layerEntry.styleCfg.labelMode || "nama";
-          const label: string =
-            mode === "kode"
-              ? String((feature as any).get("id") || "")
-              : String((feature as any).get("name") || "") ||
-                featureName(feature as any) ||
-                "";
-          t.setText(label);
-        }
 
         if (isSelected || isHovered) {
           const stroke = (style as any).getStroke?.();
