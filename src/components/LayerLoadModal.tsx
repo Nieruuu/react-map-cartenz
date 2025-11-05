@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import {
   listSpatialFeatures,
+  deleteSpatialFeature,
   type SpatialFeature,
 } from "../lib/api/spatialFeature";
 import { addApiLayersByType } from "../features/loadFromApi";
@@ -106,6 +107,7 @@ export default function LayerLoadModal({
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [showLayerDetails, setShowLayerDetails] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [deletingTypeCode, setDeletingTypeCode] = useState<string | null>(null);
 
   const refresh = () => {
     const reg = ensureRegistry();
@@ -350,8 +352,13 @@ export default function LayerLoadModal({
       const group = featureGroups[typeCode];
       if (!group) return;
 
+      const isProtected =
+        (group.typeName || "").trim().toLowerCase() ===
+        "batas kecamatan kabupaten badung";
+      if (isProtected) return;
+
       const confirmation = window.confirm(
-        `Hapus semua fitur dalam layer "${group.typeName}"?\n\nTindakan ini akan menghapus permanen seluruh fitur dari server.`
+        `Hapus semua fitur dalam layer "${group.typeName}"?\n\nTindakan ini akan menghapus seluruh fitur pada layer tersebut dari server.`
       );
       if (!confirmation) return;
 
@@ -363,7 +370,6 @@ export default function LayerLoadModal({
           progress: 0,
         });
 
-        // Ensure authentication is still valid before deleting
         await auth.ensureAuthenticated();
 
         const features = group.features ?? [];
@@ -375,21 +381,21 @@ export default function LayerLoadModal({
           return;
         }
 
-        let deletedCount = 0;
-        let failedCount = 0;
+        let deleted = 0;
+        let failures = 0;
         let lastError: unknown = null;
 
         for (const feature of features) {
           try {
             await deleteSpatialFeature(feature.id);
-            deletedCount++;
+            deleted += 1;
           } catch (error) {
+            failures += 1;
+            lastError = error;
             console.error(
-              `Gagal menghapus feature ${feature.id} pada layer ${group.typeName}:`,
+              `Failed deleting feature ${feature.id} from layer ${group.typeName}:`,
               error
             );
-            failedCount++;
-            lastError = error;
             if (
               error instanceof Error &&
               (error.message.includes("401") ||
@@ -402,12 +408,11 @@ export default function LayerLoadModal({
 
           setApiLoadState({
             isLoading: true,
-            message: `Menghapus layer ${group.typeName} (${deletedCount}/${features.length})...`,
-            progress: Math.round((deletedCount / features.length) * 100),
+            message: `Menghapus layer ${group.typeName} (${deleted}/${features.length})...`,
+            progress: Math.round((deleted / features.length) * 100),
           });
         }
 
-        // Refresh feature groups after deletion attempt
         await loadAvailableFeatureGroups();
 
         setSelectedGroups((prev) => prev.filter((code) => code !== typeCode));
@@ -420,17 +425,17 @@ export default function LayerLoadModal({
           return next;
         });
 
-        if (failedCount === 0) {
+        if (failures === 0) {
           setApiLoadState({
             isLoading: false,
-            message: `Layer ${group.typeName} berhasil dihapus (${deletedCount} fitur).`,
+            message: `Layer ${group.typeName} berhasil dihapus (${deleted} fitur).`,
           });
         } else {
           const errorMessage =
             lastError instanceof Error ? lastError.message : "Unknown error";
           setApiLoadState({
             isLoading: false,
-            message: `Layer ${group.typeName} terhapus sebagian (${deletedCount}/${features.length}). ${errorMessage}`,
+            message: `Layer ${group.typeName} terhapus sebagian (${deleted}/${features.length}). ${errorMessage}`,
           });
         }
       } catch (error) {
@@ -441,15 +446,6 @@ export default function LayerLoadModal({
             error instanceof Error ? error.message : "Unknown error"
           }`,
         });
-        if (
-          error instanceof Error &&
-          (error.message.includes("401") ||
-            error.message.includes("Unauthorized") ||
-            error.message.includes("authentication") ||
-            error.message.includes("token"))
-        ) {
-          setIsAuthenticated(false);
-        }
       } finally {
         setDeletingTypeCode(null);
       }
@@ -586,6 +582,14 @@ export default function LayerLoadModal({
       }
     }
   };
+
+  const authStateSnapshot = auth.getAuthState();
+  const authExpiresText = authStateSnapshot.expiresAt
+    ? ` (expires ${new Date(authStateSnapshot.expiresAt).toLocaleTimeString()})`
+    : "";
+  const authStatusLabel = isAuthenticated
+    ? `→ Authenticated${authExpiresText}`
+    : "⚠ Not authenticated";
 
   if (!open) return null;
 
@@ -840,15 +844,7 @@ export default function LayerLoadModal({
                       color: isAuthenticated ? "#059669" : "#dc2626",
                     }}
                   >
-                    {isAuthenticated
-                      ? `✓ Authenticated${
-                          auth.getAuthState().expiresAt
-                            ? ` (expires ${new Date(
-                                auth.getAuthState().expiresAt!
-                              ).toLocaleTimeString()})`
-                            : ""
-                        }`
-                      : "✗ Not authenticated"}
+                    {authStatusLabel}
                   </div>
                 </div>
                 <button
@@ -974,172 +970,170 @@ export default function LayerLoadModal({
                   {Object.entries(featureGroups).map(([typeCode, group]) => {
                     const isDeleting = deletingTypeCode === typeCode;
                     const isProtected =
-                      (group.typeName || "")
-                        .trim()
-                        .toLowerCase() ===
-                      "batas kecamatan kabupaten badung".toLowerCase();
-                    const deleteDisabled =
-                      deletingTypeCode !== null || isProtected;
+                      (group.typeName || "").trim().toLowerCase() ===
+                      "batas kecamatan kabupaten badung";
+                    const deleteDisabled = deletingTypeCode !== null || isProtected;
+
                     return (
                       <div
                         key={typeCode}
                         style={{ borderBottom: "1px solid #f3f4f6" }}
                       >
-                      {/* Parent Group Row */}
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          padding: "12px 8px",
-                          backgroundColor: selectedGroups.includes(typeCode)
-                            ? "#eff6ff"
-                            : "#fafafa",
-                          cursor: "pointer",
-                        }}
-                        onClick={() => toggleGroupSelection(typeCode)}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedGroups.includes(typeCode)}
-                          onChange={(event) => {
-                            event.stopPropagation();
-                            toggleGroupSelection(typeCode);
-                          }}
-                          onClick={(event) => event.stopPropagation()}
-                          style={{ marginRight: 8 }}
-                        />
-                        <button
-                          className="btn ghost"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleGroupExpansion(typeCode);
-                          }}
-                          style={{
-                            marginRight: 8,
-                            padding: "2px 6px",
-                            fontSize: 10,
-                            minWidth: "20px",
-                          }}
-                        >
-                          {expandedGroups.has(typeCode) ? "▼" : "▶"}
-                        </button>
+                        {/* Parent Group Row */}
                         <div
                           style={{
-                            flex: 1,
                             display: "flex",
                             alignItems: "center",
-                            gap: 12,
+                            padding: "12px 8px",
+                            backgroundColor: selectedGroups.includes(typeCode)
+                              ? "#eff6ff"
+                              : "#fafafa",
+                            cursor: "pointer",
                           }}
+                          onClick={() => toggleGroupSelection(typeCode)}
                         >
-                          <div style={{ fontWeight: "bold", fontSize: 13 }}>
-                            {group.typeName}
-                          </div>
-                          <div style={{ fontSize: 11, color: "#6b7280" }}>
-                            Type: {typeCode} • {group.count} features
-                          </div>
-                          {showLayerDetails && (
-                            <div
-                              style={{
-                                fontSize: 10,
-                                color: "#9ca3af",
-                                marginTop: 2,
-                              }}
-                            >
-                              {group.description}
+                          <input
+                            type="checkbox"
+                            checked={selectedGroups.includes(typeCode)}
+                            onChange={(event) => {
+                              event.stopPropagation();
+                              toggleGroupSelection(typeCode);
+                            }}
+                            onClick={(event) => event.stopPropagation()}
+                            style={{ marginRight: 8 }}
+                          />
+                          <button
+                            className="btn ghost"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleGroupExpansion(typeCode);
+                            }}
+                            style={{
+                              marginRight: 8,
+                              padding: "2px 6px",
+                              fontSize: 10,
+                              minWidth: "20px",
+                            }}
+                          >
+                            {expandedGroups.has(typeCode) ? "▼" : "▶"}
+                          </button>
+                          <div
+                            style={{
+                              flex: 1,
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 12,
+                            }}
+                          >
+                            <div style={{ fontWeight: "bold", fontSize: 13 }}>
+                              {group.typeName}
                             </div>
-                          )}
-                          <div style={{ marginLeft: "auto" }}>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (!deleteDisabled) {
-                                  handleDeleteGroup(typeCode);
-                                }
-                              }}
-                              disabled={deleteDisabled}
-                              title={
-                                isProtected
-                                  ? "Layer ini tidak dapat dihapus"
-                                  : "Hapus semua fitur di layer ini"
-                              }
-                              style={{
-                                padding: "4px 8px",
-                                fontSize: 10,
-                                borderRadius: 8,
-                                border: "1px solid rgba(248,113,113,0.45)",
-                                backgroundColor: "rgba(248,113,113,0.1)",
-                                color: "#b91c1c",
-                                fontWeight: 600,
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 4,
-                                cursor: deleteDisabled
-                                  ? "not-allowed"
-                                  : "pointer",
-                                opacity: deleteDisabled ? 0.6 : 1,
-                              }}
-                            >
-                              <span
-                                className="icon"
-                                aria-hidden="true"
-                                style={{ fontSize: 14 }}
+                            <div style={{ fontSize: 11, color: "#6b7280" }}>
+                              Type: {typeCode} • {group.count} features
+                            </div>
+                            {showLayerDetails && (
+                              <div
+                                style={{
+                                  fontSize: 10,
+                                  color: "#9ca3af",
+                                  marginTop: 2,
+                                }}
                               >
-                                delete
-                              </span>
-                              {isDeleting ? "Menghapus..." : "Hapus"}
-                            </button>
+                                {group.description}
+                              </div>
+                            )}
+                            <div style={{ marginLeft: "auto" }}>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (!deleteDisabled) {
+                                    handleDeleteGroup(typeCode);
+                                  }
+                                }}
+                                disabled={deleteDisabled}
+                                title={
+                                  isProtected
+                                    ? "Layer ini tidak dapat dihapus"
+                                    : "Hapus semua fitur di layer ini"
+                                }
+                                style={{
+                                  padding: "4px 8px",
+                                  fontSize: 10,
+                                  borderRadius: 8,
+                                  border: "1px solid rgba(248,113,113,0.45)",
+                                  backgroundColor: "rgba(248,113,113,0.1)",
+                                  color: "#b91c1c",
+                                  fontWeight: 600,
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 4,
+                                  cursor: deleteDisabled
+                                    ? "not-allowed"
+                                    : "pointer",
+                                  opacity: deleteDisabled ? 0.6 : 1,
+                                }}
+                              >
+                                <span
+                                  className="icon"
+                                  aria-hidden="true"
+                                  style={{ fontSize: 14 }}
+                                >
+                                  delete
+                                </span>
+                                {isDeleting ? "Menghapus..." : "Hapus"}
+                              </button>
+                            </div>
                           </div>
                         </div>
-                      </div>
 
-                      {/* Sub-groups (hierarchical display) */}
-                      {expandedGroups.has(typeCode) && group.subGroups && (
-                        <div
-                          style={{
-                            backgroundColor: "#f8f9fa",
-                            paddingLeft: 32,
-                          }}
-                        >
-                          {Object.entries(group.subGroups).map(
-                            ([refWilayah, subGroup]) => {
-                              const subGroupKey = `${typeCode}:${refWilayah}`;
-                              return (
-                                <div
-                                  key={subGroupKey}
-                                  style={{
-                                    display: "flex",
-                                    alignItems: "center",
-                                    padding: "8px 8px",
-                                    backgroundColor: "white",
-                                    borderTop: "1px solid #e5e7eb",
-                                    cursor: "default",
-                                  }}
-                                >
-                                  {/* Remove checkbox to prevent individual feature selection */}
-                                  <div style={{ flex: 1 }}>
-                                    <div
-                                      style={{
-                                        fontSize: 12,
-                                        fontWeight: "500",
-                                      }}
-                                    >
-                                      {refWilayah}
-                                    </div>
-                                    <div
-                                      style={{ fontSize: 10, color: "#6b7280" }}
-                                    >
-                                      {subGroup.count} features
+                        {/* Sub-groups (hierarchical display) */}
+                        {expandedGroups.has(typeCode) && group.subGroups && (
+                          <div
+                            style={{
+                              backgroundColor: "#f8f9fa",
+                              paddingLeft: 32,
+                            }}
+                          >
+                            {Object.entries(group.subGroups).map(
+                              ([refWilayah, subGroup]) => {
+                                const subGroupKey = `${typeCode}:${refWilayah}`;
+                                return (
+                                  <div
+                                    key={subGroupKey}
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      padding: "8px 8px",
+                                      backgroundColor: "white",
+                                      borderTop: "1px solid #e5e7eb",
+                                      cursor: "default",
+                                    }}
+                                  >
+                                    {/* Remove checkbox to prevent individual feature selection */}
+                                    <div style={{ flex: 1 }}>
+                                      <div
+                                        style={{
+                                          fontSize: 12,
+                                          fontWeight: "500",
+                                        }}
+                                      >
+                                        {refWilayah}
+                                      </div>
+                                      <div
+                                        style={{ fontSize: 10, color: "#6b7280" }}
+                                      >
+                                        {subGroup.count} features
+                                      </div>
                                     </div>
                                   </div>
-                                </div>
-                              );
-                            }
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                                );
+                              }
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -1162,82 +1156,6 @@ export default function LayerLoadModal({
           style={{
             display: "flex",
             justifyContent: "flex-end",
-            gap: 8,
-            marginTop: 12,
-          }}
-        >
-          <button className="btn ghost" onClick={onClose}>
-            Batal
-          </button>
-          {tab === "local" && (
-            <button
-              className="btn primary"
-              onClick={onLoad}
-              disabled={!selected}
-            >
-              Load
-            </button>
-          )}
-          {tab === "api" && isAuthenticated && (
-            <button
-              className="btn primary"
-              onClick={loadSelectedGroups}
-              disabled={
-                apiLoadState.isLoading ||
-                (selectedGroups.length === 0 && selectedSubGroups.length === 0)
-              }
-            >
-              {apiLoadState.isLoading
-                ? "Loading..."
-                : `Load Selected (${
-                    selectedGroups.length + selectedSubGroups.length
-                  })`}
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-nd",
-            gap: 8,
-            marginTop: 12,
-          }}
-        >
-          <button className="btn ghost" onClick={onClose}>
-            Batal
-          </button>
-          {tab === "local" && (
-            <button
-              className="btn primary"
-              onClick={onLoad}
-              disabled={!selected}
-            >
-              Load
-            </button>
-          )}
-          {tab === "api" && isAuthenticated && (
-            <button
-              className="btn primary"
-              onClick={loadSelectedGroups}
-              disabled={
-                apiLoadState.isLoading ||
-                (selectedGroups.length === 0 && selectedSubGroups.length === 0)
-              }
-            >
-              {apiLoadState.isLoading
-                ? "Loading..."
-                : `Load Selected (${
-                    selectedGroups.length + selectedSubGroups.length
-                  })`}
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-nd",
             gap: 8,
             marginTop: 12,
           }}

@@ -30,6 +30,7 @@ import {
 } from "../hooks/useLayersStore";
 import LayerLoadModal from "./LayerLoadModal";
 import ExportModal from "./ExportModal";
+import PrintMapModal from "./PrintMapModal";
 import {
   deleteSpatialFeature,
   createSpatialFeature,
@@ -4317,7 +4318,9 @@ export default function LeftDock() {
   const [openLoad, setOpenLoad] = useState(false);
   const [loadTab, setLoadTab] = useState<"local" | "api">("api");
   const [openExport, setOpenExport] = useState(false);
+  const [openPrint, setOpenPrint] = useState(false);
   const openExportModal = () => setOpenExport(true);
+  const openPrintModal = () => setOpenPrint(true);
 
   /* ---------- Export helpers ---------- */
   function sanitizeForDbf(
@@ -5550,6 +5553,13 @@ export default function LeftDock() {
               >
                 <span className="icon">download</span> Export ZIP (Shapefile)
               </button>
+              <button
+                className="btn-tool"
+                onClick={openPrintModal}
+                title="Cetak satu layer ke PDF tanpa latar peta"
+              >
+                <span className="icon">picture_as_pdf</span> Cetak Peta (PDF)
+              </button>
             </div>
             <div className="muted" style={{ marginTop: 8, fontSize: 11 }}>
               {importMode === "local" ? (
@@ -5610,6 +5620,16 @@ export default function LeftDock() {
               flash(`Gagal export: ${errorMessage}`, "err");
             }
           }
+        }}
+      />
+      <PrintMapModal
+        open={openPrint}
+        onClose={() => setOpenPrint(false)}
+        onPrinted={() => {
+          flash("PDF berhasil disimpan.", "ok", 2600);
+        }}
+        onError={(message) => {
+          flash(`Gagal mencetak PDF: ${message}`, "err", 3600);
         }}
       />
 
