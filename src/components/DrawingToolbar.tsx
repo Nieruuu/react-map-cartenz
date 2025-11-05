@@ -5,6 +5,8 @@ interface DrawingToolbarProps {
   onCancel: () => void;
   featureCount: number;
   isLoading: boolean;
+  disableDone?: boolean;
+  disableHotkeys?: boolean;
 }
 
 const DrawingToolbar: React.FC<DrawingToolbarProps> = ({
@@ -12,9 +14,13 @@ const DrawingToolbar: React.FC<DrawingToolbarProps> = ({
   onCancel,
   featureCount,
   isLoading,
+  disableDone = false,
+  disableHotkeys = false,
 }) => {
   // Add keyboard shortcuts
   useEffect(() => {
+    if (disableHotkeys) return;
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Enter") {
         e.preventDefault();
@@ -27,7 +33,7 @@ const DrawingToolbar: React.FC<DrawingToolbarProps> = ({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onDone, onCancel]);
+  }, [onDone, onCancel, disableHotkeys]);
 
   return (
     <div
@@ -74,21 +80,26 @@ const DrawingToolbar: React.FC<DrawingToolbarProps> = ({
       <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
         <button
           onClick={onDone}
-          disabled={featureCount === 0 || isLoading}
+          disabled={featureCount === 0 || isLoading || disableDone}
           style={{
-            backgroundColor: isLoading ? "#9ca3af" : "#10b981",
+            backgroundColor:
+              isLoading || disableDone ? "#9ca3af" : "#10b981",
             color: "white",
             border: "none",
             borderRadius: "8px",
             padding: "8px 16px",
             fontSize: "14px",
             fontWeight: "500",
-            cursor: featureCount === 0 || isLoading ? "not-allowed" : "pointer",
+            cursor:
+              featureCount === 0 || isLoading || disableDone
+                ? "not-allowed"
+                : "pointer",
             display: "flex",
             alignItems: "center",
             gap: "6px",
             transition: "all 0.2s ease",
-            opacity: featureCount === 0 || isLoading ? 0.6 : 1,
+            opacity:
+              featureCount === 0 || isLoading || disableDone ? 0.6 : 1,
           }}
           title="Selesai dan simpan ke server (Enter)"
         >

@@ -5812,6 +5812,8 @@ export default function LeftDock() {
           onCancel={handleDrawingCancel}
           featureCount={drawSessionRef.current?.src.getFeatures().length || 0}
           isLoading={isSavingDrawing}
+          disableDone={showDrawingForm}
+          disableHotkeys={showDrawingForm}
         />
       )}
 
