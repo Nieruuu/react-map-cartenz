@@ -851,7 +851,7 @@ export default function LeftDock() {
   // Translate feature state
   const [showTranslateFeatureModal, setShowTranslateFeatureModal] =
     useState(false);
-  const translateFeaturePosition = useMemo(() => ({ x: 850, y: 150 }), []);
+  const translateFeaturePosition = useMemo(() => ({ x: 750, y: 150 }), []);
   const [isTranslateFeatureDirty, setIsTranslateFeatureDirty] = useState(false);
   const [isSavingTranslateFeature, setIsSavingTranslateFeature] =
     useState(false);

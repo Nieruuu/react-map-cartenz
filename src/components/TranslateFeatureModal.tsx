@@ -134,54 +134,117 @@ export default function TranslateFeatureModal({
     setShowConfirmDialog(false);
   };
 
+  const statusText = isDirty
+    ? "Perubahan belum disimpan"
+    : "Tidak ada perubahan";
+
+  const featureLabel = featureName || "Feature";
+
   if (!isOpen) return null;
 
   return (
     <>
       <div
+        role="region"
+        aria-label="Translate feature controls"
+        aria-live="polite"
+        tabIndex={0}
         ref={modalRef}
         style={{
           position: "fixed",
-          left: position.x,
-          top: position.y,
-          background: "#ffffff",
-          border: "1px solid #d1d5db",
-          borderRadius: "8px",
-          boxShadow: "0 10px 25px rgba(0, 0, 0, 0.1)",
-          padding: "16px",
-          zIndex: 1000,
-          minWidth: "280px",
-          maxWidth: "320px",
+          left: `${position.x}px`,
+          top: `${position.y}px`,
+          zIndex: 2600,
+          backgroundColor: "rgba(255, 255, 255, 0.96)",
+          backdropFilter: "blur(10px)",
+          borderRadius: "16px",
+          padding: "16px 22px",
+          boxShadow: "0 22px 45px rgba(15, 23, 42, 0.18)",
+          display: "flex",
+          alignItems: "center",
+          gap: "22px",
+          border: "1px solid rgba(148, 163, 184, 0.35)",
+          minWidth: "340px",
+          maxWidth: "520px",
         }}
       >
         <div
           style={{
-            fontSize: "14px",
-            fontWeight: 600,
-            marginBottom: "12px",
-            color: "#111827",
+            display: "flex",
+            flexDirection: "column",
+            gap: "4px",
+            minWidth: 0,
+            flex: 1,
           }}
         >
-          Pindahkan Feature
-        </div>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              fontSize: "14px",
+              fontWeight: 600,
+              color: "#0f172a",
+              lineHeight: 1.3,
+            }}
+          >
+            <span
+              className="icon"
+              aria-hidden="true"
+              style={{ color: "#0ea5e9", fontSize: "18px" }}
+            >
+              near_me
+            </span>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+              {featureLabel}
+              {featureId ? ` (#${featureId})` : ""}
+            </span>
+          </div>
 
-        <div
-          style={{
-            fontSize: "12px",
-            color: "#6b7280",
-            marginBottom: "16px",
-            lineHeight: 1.4,
-          }}
+          <span
+            id="translate-feature-status"
+            style={{
+              fontSize: "12px",
+              color: isDirty ? "#b91c1c" : "#64748b",
+            }}
         >
-          {featureName ? `Feature: ${featureName}` : "Feature tidak diketahui"}
-          {featureId && <div style={{ marginTop: "4px" }}>ID: {featureId}</div>}
+            {statusText}
+          </span>
+
+          <span
+            style={{
+              fontSize: "12px",
+              color: "#6b7280",
+              display: "flex",
+              gap: "6px",
+              alignItems: "center",
+              flexWrap: "wrap",
+              rowGap: "4px",
+            }}
+          >
+            <span aria-hidden="true">
+              Drag feature untuk memindahkan posisinya
+            </span>
+            <span
+              style={{
+                padding: "2px 6px",
+                borderRadius: "6px",
+                backgroundColor: "rgba(14, 165, 233, 0.12)",
+                color: "#0ea5e9",
+                fontSize: "11px",
+              }}
+            >
+              Enter = Simpan, Esc = Batal
+            </span>
+          </span>
         </div>
 
         <div
           style={{
             display: "flex",
-            gap: "8px",
-            justifyContent: "flex-end",
+            gap: "10px",
+            alignItems: "center",
+            flexShrink: 0,
           }}
         >
           <button
@@ -189,15 +252,17 @@ export default function TranslateFeatureModal({
             type="button"
             onClick={onFinish}
             disabled={isSaving}
+            title="Batalkan perubahan dan keluar dari mode pindah feature (Esc)"
             style={{
-              padding: "8px 16px",
-              fontSize: "12px",
+              border: "1px solid #0ea5e9",
+              backgroundColor: "white",
+              color: "#0ea5e9",
+              borderRadius: "10px",
+              padding: "8px 14px",
+              fontSize: "13px",
               fontWeight: 500,
-              border: "1px solid #d1d5db",
-              borderRadius: "6px",
-              background: "#ffffff",
-              color: "#374151",
               cursor: isSaving ? "not-allowed" : "pointer",
+              transition: "all 0.2s ease",
               opacity: isSaving ? 0.6 : 1,
             }}
           >
@@ -209,18 +274,30 @@ export default function TranslateFeatureModal({
             type="button"
             onClick={handleSaveClick}
             disabled={!isDirty || isSaving}
+            title="Simpan perubahan ke server (Enter)"
             style={{
-              padding: "8px 16px",
-              fontSize: "12px",
-              fontWeight: 500,
               border: "none",
-              borderRadius: "6px",
-              background: isDirty ? "#10b981" : "#d1d5db",
-              color: "#ffffff",
+              backgroundColor: isSaving
+                ? "#9ca3af"
+                : isDirty
+                ? "#10b981"
+                : "#6b7280",
+              color: "white",
+              borderRadius: "10px",
+              padding: "8px 16px",
+              fontSize: "13px",
+              fontWeight: 600,
               cursor: isDirty && !isSaving ? "pointer" : "not-allowed",
-              opacity: isDirty && !isSaving ? 1 : 0.6,
+              transition: "all 0.2s ease",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              opacity: isSaving ? 0.7 : 1,
             }}
           >
+            <span className="icon" aria-hidden="true">
+              save
+            </span>
             {isSaving ? "Menyimpan..." : "Simpan"}
           </button>
         </div>
