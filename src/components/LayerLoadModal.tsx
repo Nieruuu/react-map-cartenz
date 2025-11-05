@@ -345,6 +345,118 @@ export default function LayerLoadModal({
     }
   };
 
+  const handleDeleteGroup = useCallback(
+    async (typeCode: string) => {
+      const group = featureGroups[typeCode];
+      if (!group) return;
+
+      const confirmation = window.confirm(
+        `Hapus semua fitur dalam layer "${group.typeName}"?\n\nTindakan ini akan menghapus permanen seluruh fitur dari server.`
+      );
+      if (!confirmation) return;
+
+      try {
+        setDeletingTypeCode(typeCode);
+        setApiLoadState({
+          isLoading: true,
+          message: `Menghapus layer ${group.typeName}...`,
+          progress: 0,
+        });
+
+        // Ensure authentication is still valid before deleting
+        await auth.ensureAuthenticated();
+
+        const features = group.features ?? [];
+        if (features.length === 0) {
+          setApiLoadState({
+            isLoading: false,
+            message: `Layer ${group.typeName} tidak memiliki fitur untuk dihapus.`,
+          });
+          return;
+        }
+
+        let deletedCount = 0;
+        let failedCount = 0;
+        let lastError: unknown = null;
+
+        for (const feature of features) {
+          try {
+            await deleteSpatialFeature(feature.id);
+            deletedCount++;
+          } catch (error) {
+            console.error(
+              `Gagal menghapus feature ${feature.id} pada layer ${group.typeName}:`,
+              error
+            );
+            failedCount++;
+            lastError = error;
+            if (
+              error instanceof Error &&
+              (error.message.includes("401") ||
+                error.message.includes("Unauthorized"))
+            ) {
+              setIsAuthenticated(false);
+              break;
+            }
+          }
+
+          setApiLoadState({
+            isLoading: true,
+            message: `Menghapus layer ${group.typeName} (${deletedCount}/${features.length})...`,
+            progress: Math.round((deletedCount / features.length) * 100),
+          });
+        }
+
+        // Refresh feature groups after deletion attempt
+        await loadAvailableFeatureGroups();
+
+        setSelectedGroups((prev) => prev.filter((code) => code !== typeCode));
+        setSelectedSubGroups((prev) =>
+          prev.filter((key) => !key.startsWith(`${typeCode}:`))
+        );
+        setExpandedGroups((prev) => {
+          const next = new Set(prev);
+          next.delete(typeCode);
+          return next;
+        });
+
+        if (failedCount === 0) {
+          setApiLoadState({
+            isLoading: false,
+            message: `Layer ${group.typeName} berhasil dihapus (${deletedCount} fitur).`,
+          });
+        } else {
+          const errorMessage =
+            lastError instanceof Error ? lastError.message : "Unknown error";
+          setApiLoadState({
+            isLoading: false,
+            message: `Layer ${group.typeName} terhapus sebagian (${deletedCount}/${features.length}). ${errorMessage}`,
+          });
+        }
+      } catch (error) {
+        console.error("Failed to delete feature group:", error);
+        setApiLoadState({
+          isLoading: false,
+          message: `Gagal menghapus layer: ${
+            error instanceof Error ? error.message : "Unknown error"
+          }`,
+        });
+        if (
+          error instanceof Error &&
+          (error.message.includes("401") ||
+            error.message.includes("Unauthorized") ||
+            error.message.includes("authentication") ||
+            error.message.includes("token"))
+        ) {
+          setIsAuthenticated(false);
+        }
+      } finally {
+        setDeletingTypeCode(null);
+      }
+    },
+    [featureGroups, loadAvailableFeatureGroups]
+  );
+
   // Handle authentication
   const handleApiAuth = async () => {
     try {
@@ -859,11 +971,20 @@ export default function LayerLoadModal({
                     scrollbarGutter: "stable",
                   }}
                 >
-                  {Object.entries(featureGroups).map(([typeCode, group]) => (
-                    <div
-                      key={typeCode}
-                      style={{ borderBottom: "1px solid #f3f4f6" }}
-                    >
+                  {Object.entries(featureGroups).map(([typeCode, group]) => {
+                    const isDeleting = deletingTypeCode === typeCode;
+                    const isProtected =
+                      (group.typeName || "")
+                        .trim()
+                        .toLowerCase() ===
+                      "batas kecamatan kabupaten badung".toLowerCase();
+                    const deleteDisabled =
+                      deletingTypeCode !== null || isProtected;
+                    return (
+                      <div
+                        key={typeCode}
+                        style={{ borderBottom: "1px solid #f3f4f6" }}
+                      >
                       {/* Parent Group Row */}
                       <div
                         style={{
@@ -880,7 +1001,11 @@ export default function LayerLoadModal({
                         <input
                           type="checkbox"
                           checked={selectedGroups.includes(typeCode)}
-                          onChange={() => toggleGroupSelection(typeCode)}
+                          onChange={(event) => {
+                            event.stopPropagation();
+                            toggleGroupSelection(typeCode);
+                          }}
+                          onClick={(event) => event.stopPropagation()}
                           style={{ marginRight: 8 }}
                         />
                         <button
@@ -898,7 +1023,14 @@ export default function LayerLoadModal({
                         >
                           {expandedGroups.has(typeCode) ? "▼" : "▶"}
                         </button>
-                        <div style={{ flex: 1 }}>
+                        <div
+                          style={{
+                            flex: 1,
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 12,
+                          }}
+                        >
                           <div style={{ fontWeight: "bold", fontSize: 13 }}>
                             {group.typeName}
                           </div>
@@ -916,6 +1048,47 @@ export default function LayerLoadModal({
                               {group.description}
                             </div>
                           )}
+                          <div style={{ marginLeft: "auto" }}>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (!deleteDisabled) {
+                                  handleDeleteGroup(typeCode);
+                                }
+                              }}
+                              disabled={deleteDisabled}
+                              title={
+                                isProtected
+                                  ? "Layer ini tidak dapat dihapus"
+                                  : "Hapus semua fitur di layer ini"
+                              }
+                              style={{
+                                padding: "4px 8px",
+                                fontSize: 10,
+                                borderRadius: 8,
+                                border: "1px solid rgba(248,113,113,0.45)",
+                                backgroundColor: "rgba(248,113,113,0.1)",
+                                color: "#b91c1c",
+                                fontWeight: 600,
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 4,
+                                cursor: deleteDisabled
+                                  ? "not-allowed"
+                                  : "pointer",
+                                opacity: deleteDisabled ? 0.6 : 1,
+                              }}
+                            >
+                              <span
+                                className="icon"
+                                aria-hidden="true"
+                                style={{ fontSize: 14 }}
+                              >
+                                delete
+                              </span>
+                              {isDeleting ? "Menghapus..." : "Hapus"}
+                            </button>
+                          </div>
                         </div>
                       </div>
 
@@ -965,7 +1138,8 @@ export default function LayerLoadModal({
                         </div>
                       )}
                     </div>
-                  ))}
+                  );
+                })}
                 </div>
               </div>
             )}
@@ -988,6 +1162,82 @@ export default function LayerLoadModal({
           style={{
             display: "flex",
             justifyContent: "flex-end",
+            gap: 8,
+            marginTop: 12,
+          }}
+        >
+          <button className="btn ghost" onClick={onClose}>
+            Batal
+          </button>
+          {tab === "local" && (
+            <button
+              className="btn primary"
+              onClick={onLoad}
+              disabled={!selected}
+            >
+              Load
+            </button>
+          )}
+          {tab === "api" && isAuthenticated && (
+            <button
+              className="btn primary"
+              onClick={loadSelectedGroups}
+              disabled={
+                apiLoadState.isLoading ||
+                (selectedGroups.length === 0 && selectedSubGroups.length === 0)
+              }
+            >
+              {apiLoadState.isLoading
+                ? "Loading..."
+                : `Load Selected (${
+                    selectedGroups.length + selectedSubGroups.length
+                  })`}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+nd",
+            gap: 8,
+            marginTop: 12,
+          }}
+        >
+          <button className="btn ghost" onClick={onClose}>
+            Batal
+          </button>
+          {tab === "local" && (
+            <button
+              className="btn primary"
+              onClick={onLoad}
+              disabled={!selected}
+            >
+              Load
+            </button>
+          )}
+          {tab === "api" && isAuthenticated && (
+            <button
+              className="btn primary"
+              onClick={loadSelectedGroups}
+              disabled={
+                apiLoadState.isLoading ||
+                (selectedGroups.length === 0 && selectedSubGroups.length === 0)
+              }
+            >
+              {apiLoadState.isLoading
+                ? "Loading..."
+                : `Load Selected (${
+                    selectedGroups.length + selectedSubGroups.length
+                  })`}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+nd",
             gap: 8,
             marginTop: 12,
           }}

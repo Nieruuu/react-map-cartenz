@@ -824,7 +824,8 @@ export default function TaxMap() {
           console.warn(
             "Failed to load 'Batas Kecamatan Kabupaten Badung' layer from API"
           );
-          showError("Gagal memuat data peta dari server. Silakan coba lagi.");
+          updateProgress(100);
+          finishLoading();
           return;
         }
 
@@ -917,6 +918,7 @@ export default function TaxMap() {
             : "Gagal memuat data peta dari server. Silakan coba lagi.";
 
         showError(errorMessage);
+        finishLoading();
       }
     })();
 
