@@ -7,6 +7,8 @@ import {
 } from "../lib/api/spatialFeature";
 import { addApiLayersByType } from "../features/loadFromApi";
 import { auth } from "../lib/api/auth";
+import { useLayersStore } from "../hooks/useLayersStore";
+import { LayerDeleteConfirmationModal } from "./LayerDeleteConfirmationModal";
 // Removed unused imports: transformSpatialFeatures, getUniqueTypeCodes, groupFeaturesByType, TransformedFeature
 
 type Kind = "kabupaten" | "kecamatan" | "kelurahan" | "custom";
@@ -108,6 +110,18 @@ export default function LayerLoadModal({
   const [showLayerDetails, setShowLayerDetails] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [deletingTypeCode, setDeletingTypeCode] = useState<string | null>(null);
+  const [pendingDeleteGroup, setPendingDeleteGroup] = useState<{
+    typeCode: string;
+    typeName: string;
+    featureCount: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setPendingDeleteGroup(null);
+      setDeletingTypeCode(null);
+    }
+  }, [open]);
 
   const refresh = () => {
     const reg = ensureRegistry();
@@ -347,26 +361,35 @@ export default function LayerLoadModal({
     }
   };
 
-  const handleDeleteGroup = useCallback(
+  const removeLayersForTypeCode = useCallback((typeCode: string) => {
+    const normalizedType = (typeCode || "").trim().toLowerCase();
+    if (!normalizedType) return;
+    const { layers, removeEntry } = useLayersStore.getState();
+    const targets = layers.filter((layer) => {
+      const layerType = (layer.typeCode || "").trim().toLowerCase();
+      return layerType === normalizedType;
+    });
+    targets.forEach((layer) => {
+      removeEntry(layer.id);
+    });
+  }, []);
+
+  const deleteGroup = useCallback(
     async (typeCode: string) => {
       const group = featureGroups[typeCode];
       if (!group) return;
 
+      const typeName = group.typeName || getLayerNameForType(typeCode);
       const isProtected =
-        (group.typeName || "").trim().toLowerCase() ===
+        typeName.trim().toLowerCase() ===
         "batas kecamatan kabupaten badung";
       if (isProtected) return;
-
-      const confirmation = window.confirm(
-        `Hapus semua fitur dalam layer "${group.typeName}"?\n\nTindakan ini akan menghapus seluruh fitur pada layer tersebut dari server.`
-      );
-      if (!confirmation) return;
 
       try {
         setDeletingTypeCode(typeCode);
         setApiLoadState({
           isLoading: true,
-          message: `Menghapus layer ${group.typeName}...`,
+          message: `Menghapus layer ${typeName}...`,
           progress: 0,
         });
 
@@ -374,9 +397,10 @@ export default function LayerLoadModal({
 
         const features = group.features ?? [];
         if (features.length === 0) {
+          removeLayersForTypeCode(typeCode);
           setApiLoadState({
             isLoading: false,
-            message: `Layer ${group.typeName} tidak memiliki fitur untuk dihapus.`,
+            message: `Layer ${typeName} tidak memiliki fitur untuk dihapus.`,
           });
           return;
         }
@@ -408,7 +432,7 @@ export default function LayerLoadModal({
 
           setApiLoadState({
             isLoading: true,
-            message: `Menghapus layer ${group.typeName} (${deleted}/${features.length})...`,
+            message: `Menghapus layer ${typeName} (${deleted}/${features.length})...`,
             progress: Math.round((deleted / features.length) * 100),
           });
         }
@@ -426,16 +450,17 @@ export default function LayerLoadModal({
         });
 
         if (failures === 0) {
+          removeLayersForTypeCode(typeCode);
           setApiLoadState({
             isLoading: false,
-            message: `Layer ${group.typeName} berhasil dihapus (${deleted} fitur).`,
+            message: `Layer ${typeName} berhasil dihapus (${deleted} fitur).`,
           });
         } else {
           const errorMessage =
             lastError instanceof Error ? lastError.message : "Unknown error";
           setApiLoadState({
             isLoading: false,
-            message: `Layer ${group.typeName} terhapus sebagian (${deleted}/${features.length}). ${errorMessage}`,
+            message: `Layer ${typeName} terhapus sebagian (${deleted}/${features.length}). ${errorMessage}`,
           });
         }
       } catch (error) {
@@ -450,8 +475,45 @@ export default function LayerLoadModal({
         setDeletingTypeCode(null);
       }
     },
-    [featureGroups, loadAvailableFeatureGroups]
+    [featureGroups, loadAvailableFeatureGroups, removeLayersForTypeCode]
   );
+
+  const requestDeleteGroup = useCallback(
+    (typeCode: string) => {
+      const group = featureGroups[typeCode];
+      if (!group) return;
+      const typeName = group.typeName || getLayerNameForType(typeCode);
+      const isProtected =
+        typeName.trim().toLowerCase() ===
+        "batas kecamatan kabupaten badung";
+      if (isProtected) return;
+      const featureCount =
+        typeof group.count === "number"
+          ? group.count
+          : group.features?.length ?? 0;
+      setPendingDeleteGroup({
+        typeCode,
+        typeName,
+        featureCount,
+      });
+    },
+    [featureGroups]
+  );
+
+  const cancelDeleteGroup = useCallback(() => {
+    if (deletingTypeCode) return;
+    setPendingDeleteGroup(null);
+  }, [deletingTypeCode]);
+
+  const confirmDeleteGroup = useCallback(async () => {
+    if (!pendingDeleteGroup) return;
+    const { typeCode } = pendingDeleteGroup;
+    try {
+      await deleteGroup(typeCode);
+    } finally {
+      setPendingDeleteGroup(null);
+    }
+  }, [pendingDeleteGroup, deleteGroup]);
 
   // Handle authentication
   const handleApiAuth = async () => {
@@ -594,16 +656,21 @@ export default function LayerLoadModal({
   if (!open) return null;
 
   return (
-    <div
-      className="modal-overlay"
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.35)",
-        zIndex: 9999,
-      }}
-      onClick={onClose}
-    >
+    <>
+      <div
+        className="modal-overlay"
+        style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(0,0,0,0.35)",
+          zIndex: 9999,
+        }}
+        onClick={() => {
+          if (!deletingTypeCode) {
+            onClose();
+          }
+        }}
+      >
       <div
         className="modal-panel"
         onClick={(e) => e.stopPropagation()}
@@ -972,7 +1039,10 @@ export default function LayerLoadModal({
                     const isProtected =
                       (group.typeName || "").trim().toLowerCase() ===
                       "batas kecamatan kabupaten badung";
-                    const deleteDisabled = deletingTypeCode !== null || isProtected;
+                    const deleteDisabled =
+                      deletingTypeCode !== null ||
+                      isProtected ||
+                      pendingDeleteGroup !== null;
 
                     return (
                       <div
@@ -1047,7 +1117,7 @@ export default function LayerLoadModal({
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   if (!deleteDisabled) {
-                                    handleDeleteGroup(typeCode);
+                                    requestDeleteGroup(typeCode);
                                   }
                                 }}
                                 disabled={deleteDisabled}
@@ -1191,5 +1261,17 @@ export default function LayerLoadModal({
         </div>
       </div>
     </div>
+    <LayerDeleteConfirmationModal
+        open={pendingDeleteGroup !== null}
+        layerLabel={pendingDeleteGroup?.typeName ?? ""}
+        featureCount={pendingDeleteGroup?.featureCount}
+        isDeleting={
+          pendingDeleteGroup !== null &&
+          deletingTypeCode === pendingDeleteGroup.typeCode
+        }
+        onCancel={cancelDeleteGroup}
+        onConfirm={confirmDeleteGroup}
+      />
+    </>
   );
 }
